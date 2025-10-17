@@ -1,0 +1,38 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #1f2933;
+  background-color: #f5f7fa;
+}
+
+body {
+  margin: 0;
+}
+
+.app-container {
+  display: flex;
+  min-height: 100vh;
+}
+
+.app-nav {
+  background: #1f2937;
+  color: #fff;
+  padding: 1rem;
+  min-width: 200px;
+}
+
+.app-content {
+  flex: 1;
+  padding: 2rem;
+}
+
+.results-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.results-table th,
+.results-table td {
+  border: 1px solid #d1d5db;
+  padding: 0.5rem;
+  text-align: left;
+}
