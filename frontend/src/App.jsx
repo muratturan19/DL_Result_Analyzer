@@ -211,7 +211,7 @@ function App() {
   return (
     <div className="app-container">
       <header className="app-header">
-        <h1>🎯 YOLO AI Analyzer</h1>
+        <h1>🎯 DL_Result_Analyzer</h1>
         <p>Model performansını analiz et ve AI önerileri al</p>
       </header>
       

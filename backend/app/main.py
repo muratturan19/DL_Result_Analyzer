@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-app = FastAPI(title="YOLO AI Analyzer", version="1.0.0")
+app = FastAPI(title="DL_Result_Analyzer", version="1.0.0")
 
 # CORS - React frontend için
 app.add_middleware(
@@ -51,7 +51,7 @@ class AIAnalysis(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"message": "YOLO AI Analyzer API", "version": "1.0.0"}
+    return {"message": "DL_Result_Analyzer API", "version": "1.0.0"}
 
 @app.post("/api/upload/results")
 async def upload_results(
