@@ -3,12 +3,28 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 from textwrap import dedent
-from typing import Dict, Literal
+from typing import Any, Dict, List, Literal
 
 from anthropic import Anthropic
 from openai import OpenAI
+
+try:  # Anthropics specific error classes are optional in the runtime.
+    from anthropic import APIConnectionError as AnthropicConnectionError
+    from anthropic import APIError as AnthropicAPIError
+except (ImportError, AttributeError):  # pragma: no cover - fallback for old SDKs
+    AnthropicConnectionError = RuntimeError  # type: ignore[assignment]
+    AnthropicAPIError = RuntimeError  # type: ignore[assignment]
+
+try:  # OpenAI specific error classes are optional in the runtime.
+    from openai import APIConnectionError as OpenAIConnectionError
+    from openai import APIError as OpenAIAPIError
+except (ImportError, AttributeError):  # pragma: no cover - fallback for old SDKs
+    OpenAIConnectionError = RuntimeError  # type: ignore[assignment]
+    OpenAIAPIError = RuntimeError  # type: ignore[assignment]
 
 
 class LLMAnalyzer:
@@ -21,6 +37,75 @@ class LLMAnalyzer:
             self.client = Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
         else:
             self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+    @staticmethod
+    def _normalise_list(value: Any) -> List[str]:
+        """Ensure list-like fields are always returned as a list of strings."""
+
+        if value is None:
+            return []
+
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+
+        if isinstance(value, str):
+            cleaned = value.strip()
+            if not cleaned:
+                return []
+            # Split on newlines or semicolons if present to handle compact formats.
+            if "\n" in cleaned:
+                return [segment.strip() for segment in cleaned.splitlines() if segment.strip()]
+            if ";" in cleaned:
+                return [segment.strip() for segment in cleaned.split(";") if segment.strip()]
+            return [cleaned]
+
+        return [str(value).strip()]
+
+    @staticmethod
+    def _parse_structured_output(raw_text: str) -> Dict[str, Any]:
+        """Parse the LLM response into the standardized dictionary format."""
+
+        if not raw_text:
+            raise ValueError("LLM response payload is empty.")
+
+        raw_text = raw_text.strip()
+
+        try:
+            payload = json.loads(raw_text)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", raw_text, flags=re.DOTALL)
+            if not match:
+                raise ValueError("Unable to locate JSON object in LLM response.") from None
+            payload = json.loads(match.group(0))
+
+        structured: Dict[str, Any] = {
+            "summary": str(payload.get("summary", "")).strip(),
+            "strengths": LLMAnalyzer._normalise_list(payload.get("strengths")),
+            "weaknesses": LLMAnalyzer._normalise_list(payload.get("weaknesses")),
+            "action_items": payload.get("action_items") or [],
+            "risk_level": str(payload.get("risk_level", "")).strip(),
+            "notes": str(payload.get("notes", "")).strip(),
+        }
+
+        action_items = structured["action_items"]
+        if not isinstance(action_items, list):
+            action_items = [action_items]
+
+        normalised_action_items: List[Dict[str, Any]] = []
+        for item in action_items:
+            if isinstance(item, dict):
+                normalised_action_items.append(item)
+                continue
+
+            if isinstance(item, str):
+                normalised_action_items.append({"description": item.strip()})
+                continue
+
+            normalised_action_items.append({"value": item})
+
+        structured["action_items"] = normalised_action_items
+
+        return structured
 
     def analyze(self, metrics: Dict, config: Dict) -> Dict:
         """Create the analysis prompt and dispatch it to the chosen provider."""
@@ -115,10 +200,65 @@ class LLMAnalyzer:
         ).strip()
 
     def _analyze_with_claude(self, prompt: str) -> Dict:
-        raise NotImplementedError("Claude analysis is not implemented yet.")
+        system_instruction = (
+            "You are an assistant that strictly replies with a JSON object containing "
+            'the keys "summary", "strengths", "weaknesses", "action_items", "risk_level", '
+            'and "notes". The "action_items" value must be a JSON array.'
+        )
+
+        try:
+            response = self.client.messages.create(
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=2048,
+                temperature=0,
+                system=system_instruction,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    }
+                ],
+            )
+        except (TimeoutError, AnthropicConnectionError, AnthropicAPIError) as exc:  # pragma: no cover - network calls
+            raise RuntimeError(f"Claude request failed: {exc}") from exc
+
+        text_chunks = []
+        for block in getattr(response, "content", []):
+            if getattr(block, "type", "") == "text":
+                text_chunks.append(getattr(block, "text", ""))
+
+        raw_text = "".join(text_chunks).strip()
+        if not raw_text and hasattr(response, "model_response"):  # pragma: no cover - compatibility path
+            raw_text = str(getattr(response, "model_response", "")).strip()
+
+        return self._parse_structured_output(raw_text)
 
     def _analyze_with_gpt(self, prompt: str) -> Dict:
-        raise NotImplementedError("OpenAI analysis is not implemented yet.")
+        system_instruction = (
+            "You are an assistant that returns thorough analyses as JSON. "
+            'Respond with an object containing "summary", "strengths", "weaknesses", '
+            '"action_items", "risk_level", and "notes". Ensure "action_items" is an array of '
+            "objects with actionable guidance."
+        )
+
+        try:
+            response = self.client.chat.completions.create(  # type: ignore[attr-defined]
+                model="gpt-4o",
+                temperature=0,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+        except (TimeoutError, OpenAIConnectionError, OpenAIAPIError) as exc:  # pragma: no cover - network calls
+            raise RuntimeError(f"OpenAI request failed: {exc}") from exc
+
+        raw_text = ""
+        if getattr(response, "choices", None):
+            raw_text = response.choices[0].message.content or ""
+
+        return self._parse_structured_output(raw_text)
 
 
 __all__ = ["LLMAnalyzer"]
