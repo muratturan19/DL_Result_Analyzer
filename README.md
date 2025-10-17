@@ -1,6 +1,6 @@
-# 🎯 YOLO AI Analyzer
+# 🎯 DL_Result_Analyzer
 
-AI-powered YOLO model performance analyzer with actionable insights.
+Derin öğrenme modeli sonuçlarını analiz etmek için tasarlanmış güçlü ve esnek bir platform.
 
 ## 📋 Özellikler
 
@@ -19,8 +19,8 @@ AI-powered YOLO model performance analyzer with actionable insights.
 
 ```bash
 # Repo'yu clone'la
-git clone https://github.com/your-username/yolo-ai-analyzer.git
-cd yolo-ai-analyzer
+git clone https://github.com/your-username/DL_Result_Analyzer.git
+cd DL_Result_Analyzer
 
 # Backend setup
 cd backend
@@ -58,7 +58,7 @@ npm run dev
 ## 📁 Proje Yapısı
 
 ```
-yolo-ai-analyzer/
+DL_Result_Analyzer/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py              ✅ FastAPI app (HAZIR)
