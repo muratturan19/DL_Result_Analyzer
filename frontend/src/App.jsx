@@ -175,34 +175,42 @@ function App() {
 
   const handleUpload = async (uploadResponse) => {
     console.log('Upload response:', uploadResponse);
-    
-    // TODO: Parse CSV and extract metrics
-    // Placeholder metrics:
-    const extractedMetrics = {
-      precision: 0.56,
-      recall: 0.47,
-      map50: 0.51,
-      map50_95: 0.35,
-      loss: 0.82,
-      epochs: 150,
-      batch_size: 16,
-      learning_rate: 0.01
-    };
-    
-    setMetrics(extractedMetrics);
-    
-    // Get AI analysis
+
+    if (!uploadResponse) {
+      return;
+    }
+
+    const { metrics: responseMetrics, analysis: responseAnalysis } = uploadResponse;
+
+    if (responseMetrics) {
+      setMetrics(responseMetrics);
+    }
+
+    if (responseAnalysis) {
+      setAnalysis(responseAnalysis);
+      setLoading(false);
+      return;
+    }
+
+    setAnalysis(null);
+
+    if (!responseMetrics) {
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     try {
       const response = await fetch('http://localhost:8000/api/analyze/metrics', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(extractedMetrics)
+        body: JSON.stringify(responseMetrics)
       });
       const aiAnalysis = await response.json();
       setAnalysis(aiAnalysis);
     } catch (error) {
       console.error('Analysis failed:', error);
+      setAnalysis(null);
     } finally {
       setLoading(false);
     }
