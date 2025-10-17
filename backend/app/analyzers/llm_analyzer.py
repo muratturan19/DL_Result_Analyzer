@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from textwrap import dedent
@@ -25,6 +26,7 @@ try:  # OpenAI specific error classes are optional in the runtime.
 except (ImportError, AttributeError):  # pragma: no cover - fallback for old SDKs
     OpenAIConnectionError = RuntimeError  # type: ignore[assignment]
     OpenAIAPIError = RuntimeError  # type: ignore[assignment]
+logger = logging.getLogger(__name__)
 
 
 class LLMAnalyzer:
@@ -34,8 +36,18 @@ class LLMAnalyzer:
         self.provider = provider
 
         if provider == "claude":
+            api_key_present = bool(os.getenv("CLAUDE_API_KEY"))
+            logger.info(
+                "Anthropic istemcisi oluşturuluyor (api_key_var=%s)",
+                api_key_present,
+            )
             self.client = Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
         else:
+            api_key_present = bool(os.getenv("OPENAI_API_KEY"))
+            logger.info(
+                "OpenAI istemcisi oluşturuluyor (api_key_var=%s)",
+                api_key_present,
+            )
             self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     @staticmethod
@@ -111,6 +123,11 @@ class LLMAnalyzer:
         """Create the analysis prompt and dispatch it to the chosen provider."""
 
         prompt = self._build_prompt(metrics or {}, config or {})
+        logger.debug(
+            "LLM prompt hazırlandı (provider=%s, uzunluk=%s karakter)",
+            self.provider,
+            len(prompt),
+        )
 
         if self.provider == "claude":
             return self._analyze_with_claude(prompt)
@@ -220,6 +237,7 @@ class LLMAnalyzer:
                 ],
             )
         except (TimeoutError, AnthropicConnectionError, AnthropicAPIError) as exc:  # pragma: no cover - network calls
+            logger.exception("Claude isteği başarısız oldu")
             raise RuntimeError(f"Claude request failed: {exc}") from exc
 
         text_chunks = []
@@ -231,6 +249,10 @@ class LLMAnalyzer:
         if not raw_text and hasattr(response, "model_response"):  # pragma: no cover - compatibility path
             raw_text = str(getattr(response, "model_response", "")).strip()
 
+        logger.debug(
+            "Claude yanıtı alındı (uzunluk=%s karakter)",
+            len(raw_text),
+        )
         return self._parse_structured_output(raw_text)
 
     def _analyze_with_gpt(self, prompt: str) -> Dict:
@@ -252,12 +274,17 @@ class LLMAnalyzer:
                 ],
             )
         except (TimeoutError, OpenAIConnectionError, OpenAIAPIError) as exc:  # pragma: no cover - network calls
+            logger.exception("OpenAI isteği başarısız oldu")
             raise RuntimeError(f"OpenAI request failed: {exc}") from exc
 
         raw_text = ""
         if getattr(response, "choices", None):
             raw_text = response.choices[0].message.content or ""
 
+        logger.debug(
+            "OpenAI yanıtı alındı (uzunluk=%s karakter)",
+            len(raw_text),
+        )
         return self._parse_structured_output(raw_text)
 
 

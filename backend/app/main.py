@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import logging
 import os
 from pathlib import Path
 from typing import List, Optional
@@ -10,6 +11,13 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="DL_Result_Analyzer", version="1.0.0")
 
@@ -73,10 +81,19 @@ async def upload_results(
     csv_filename = Path(results_csv.filename or "results.csv").name
     csv_path = uploads_dir / csv_filename
 
+    logger.info(
+        "Upload request received: csv=%s yaml=%s graphs=%s",
+        csv_filename,
+        config_yaml.filename if config_yaml else None,
+        len(graphs or []),
+    )
+
     try:
         csv_bytes = await results_csv.read()
         csv_path.write_bytes(csv_bytes)
+        logger.info("CSV dosyası kaydedildi: %s", csv_path)
     except Exception as exc:
+        logger.exception("CSV dosyası kaydedilemedi: %s", csv_filename)
         raise HTTPException(status_code=500, detail=f"CSV kaydedilemedi: {exc}") from exc
 
     yaml_path: Optional[Path] = None
@@ -86,7 +103,9 @@ async def upload_results(
         try:
             yaml_bytes = await config_yaml.read()
             yaml_path.write_bytes(yaml_bytes)
+            logger.info("YAML dosyası kaydedildi: %s", yaml_path)
         except Exception as exc:
+            logger.exception("YAML dosyası kaydedilemedi: %s", yaml_filename)
             raise HTTPException(status_code=500, detail=f"YAML kaydedilemedi: {exc}") from exc
 
     saved_graphs: List[str] = []
@@ -100,7 +119,9 @@ async def upload_results(
                 graph_bytes = await graph.read()
                 graph_path.write_bytes(graph_bytes)
                 saved_graphs.append(graph_filename)
+                logger.info("Grafik kaydedildi: %s", graph_path)
             except Exception as exc:
+                logger.exception("Grafik kaydedilemedi: %s", graph_filename)
                 raise HTTPException(status_code=500, detail=f"Grafik kaydedilemedi: {exc}") from exc
 
     try:
@@ -111,12 +132,21 @@ async def upload_results(
         metrics = parser.parse_metrics()
         config = parser.parse_config()
 
+        logger.info(
+            "Metrix ve konfigürasyon parse edildi: metrics_keys=%s config_keys=%s",
+            sorted(metrics.keys()),
+            sorted(config.keys()),
+        )
+
         analysis = {}
         try:
             provider = os.getenv("LLM_PROVIDER", "claude")
             analyzer = LLMAnalyzer(provider=provider)  # type: ignore[arg-type]
+            logger.info("LLM analizi başlatılıyor: provider=%s", provider)
             analysis = analyzer.analyze(metrics, config)
+            logger.info("LLM analizi tamamlandı: provider=%s", provider)
         except Exception as exc:
+            logger.exception("LLM analizi başarısız oldu")
             analysis = {
                 "summary": "LLM analizi gerçekleştirilemedi.",
                 "strengths": [],
@@ -138,8 +168,10 @@ async def upload_results(
             },
         }
     except (FileNotFoundError, ValueError) as exc:
+        logger.exception("Dosya veya veri hatası nedeniyle upload başarısız oldu")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # pragma: no cover - unexpected failures
+        logger.exception("Beklenmeyen bir hata oluştu")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 @app.post("/api/analyze/metrics")
@@ -168,8 +200,9 @@ async def analyze_metrics(metrics: YOLOMetrics):
         )
         
         return analysis
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        logger.exception("Metric analizi başarısız oldu")
+        raise HTTPException(status_code=500, detail=str(exc))
 
 @app.post("/api/compare")
 async def compare_runs(run_ids: List[str]):
