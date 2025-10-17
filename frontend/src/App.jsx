@@ -172,6 +172,12 @@ function App() {
   const [metrics, setMetrics] = useState(null);
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const toNumber = (value, fallback = 0) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
 
   const handleUpload = async (uploadResponse) => {
     console.log('Upload response:', uploadResponse);
@@ -180,7 +186,9 @@ function App() {
       return;
     }
 
-    const { metrics: responseMetrics, analysis: responseAnalysis } = uploadResponse;
+    setError(null);
+
+    const { metrics: responseMetrics, analysis: responseAnalysis, config: responseConfig } = uploadResponse;
 
     if (responseMetrics) {
       setMetrics(responseMetrics);
@@ -199,18 +207,37 @@ function App() {
       return;
     }
 
+    const metricsPayload = {
+      precision: responseMetrics.precision ?? 0,
+      recall: responseMetrics.recall ?? 0,
+      map50: responseMetrics.map50 ?? 0,
+      map50_95: responseMetrics.map50_95 ?? 0,
+      loss: responseMetrics.loss ?? 0,
+      epochs: toNumber(responseConfig?.epochs, 0),
+      batch_size: toNumber(responseConfig?.batch, 0),
+      learning_rate: toNumber(responseConfig?.lr0, 0),
+      iou_threshold: toNumber(responseConfig?.iou, 0.5),
+      conf_threshold: toNumber(responseConfig?.conf, 0.5)
+    };
+
     setLoading(true);
     try {
       const response = await fetch('http://localhost:8000/api/analyze/metrics', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(responseMetrics)
+        body: JSON.stringify(metricsPayload)
       });
-      const aiAnalysis = await response.json();
+      const responseData = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const message = responseData?.detail || 'Analiz isteği başarısız oldu.';
+        throw new Error(Array.isArray(message) ? message[0]?.msg || 'Analiz isteği başarısız oldu.' : message);
+      }
+      const aiAnalysis = responseData;
       setAnalysis(aiAnalysis);
     } catch (error) {
       console.error('Analysis failed:', error);
       setAnalysis(null);
+      setError(error.message || 'Analiz sırasında bir hata oluştu.');
     } finally {
       setLoading(false);
     }
@@ -222,10 +249,16 @@ function App() {
         <h1>🎯 DL_Result_Analyzer</h1>
         <p>Model performansını analiz et ve AI önerileri al</p>
       </header>
-      
+
       <main className="app-main">
         <FileUploader onUpload={handleUpload} />
-        
+
+        {error && (
+          <div className="error-banner">
+            {error}
+          </div>
+        )}
+
         {metrics && (
           <>
             <MetricsDisplay metrics={metrics} />
