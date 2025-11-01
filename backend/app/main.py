@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -68,7 +68,8 @@ async def upload_results(
     results_csv: UploadFile = File(...),
     config_yaml: Optional[UploadFile] = File(None),
     graphs: Optional[List[UploadFile]] = File(None),
-    llm_provider: str = "claude"
+    best_model: Optional[UploadFile] = File(None),
+    llm_provider: str = "claude",
 ):
     """
     YOLO eğitim sonuçlarını upload et
@@ -83,10 +84,11 @@ async def upload_results(
     csv_path = uploads_dir / csv_filename
 
     logger.info(
-        "Upload request received: csv=%s yaml=%s graphs=%s",
+        "Upload request received: csv=%s yaml=%s graphs=%s best_model=%s",
         csv_filename,
         config_yaml.filename if config_yaml else None,
         len(graphs or []),
+        best_model.filename if best_model else None,
     )
 
     try:
@@ -125,6 +127,20 @@ async def upload_results(
                 logger.exception("Grafik kaydedilemedi: %s", graph_filename)
                 raise HTTPException(status_code=500, detail=f"Grafik kaydedilemedi: {exc}") from exc
 
+    best_model_path: Optional[Path] = None
+    if best_model:
+        best_model_dir = uploads_dir / "models"
+        best_model_dir.mkdir(parents=True, exist_ok=True)
+        best_model_filename = Path(best_model.filename or "best.pt").name
+        best_model_path = best_model_dir / best_model_filename
+        try:
+            model_bytes = await best_model.read()
+            best_model_path.write_bytes(model_bytes)
+            logger.info("best.pt kaydedildi: %s", best_model_path)
+        except Exception as exc:
+            logger.exception("best.pt kaydedilemedi: %s", best_model_filename)
+            raise HTTPException(status_code=500, detail=f"best.pt kaydedilemedi: {exc}") from exc
+
     try:
         from app.parsers.yolo_parser import YOLOResultParser
         from app.analyzers.llm_analyzer import LLMAnalyzer
@@ -132,6 +148,7 @@ async def upload_results(
         parser = YOLOResultParser(csv_path, yaml_path)
         metrics = parser.parse_metrics()
         config = parser.parse_config()
+        history = parser.parse_training_curves()
 
         logger.info(
             "Metrix ve konfigürasyon parse edildi: metrics_keys=%s config_keys=%s",
@@ -167,11 +184,13 @@ async def upload_results(
             "status": "success",
             "metrics": metrics,
             "config": config,
+            "history": history,
             "analysis": analysis,
             "files": {
                 "csv": csv_filename,
                 "yaml": yaml_path.name if yaml_path else None,
                 "graphs": saved_graphs,
+                "best_model": best_model_path.name if best_model_path else None,
             },
         }
     except (FileNotFoundError, ValueError) as exc:
@@ -180,6 +199,26 @@ async def upload_results(
     except Exception as exc:  # pragma: no cover - unexpected failures
         logger.exception("Beklenmeyen bir hata oluştu")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+@app.post("/api/optimize/thresholds")
+async def optimize_thresholds(
+    best_model: UploadFile = File(...),
+    data_yaml: UploadFile = File(...),
+    iou_range: str = Form(...),
+    conf_range: str = Form(...),
+):
+    """Temporarily disabled until real YOLO evaluation is implemented."""
+
+    logger.warning(
+        "Threshold optimizer endpoint was called but the feature is disabled until real YOLO"
+        " evaluation is implemented."
+    )
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "Threshold optimizasyonu backend'de henüz gerçek YOLO değerlendirmesiyle"
+            " entegre edilmedi. Güvenilir sonuçlar için bu özellik devre dışıdır."
+        ),
+    )
 
 @app.post("/api/analyze/metrics")
 async def analyze_metrics(metrics: YOLOMetrics):
