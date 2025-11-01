@@ -6,7 +6,7 @@ import logging
 import os
 from hashlib import sha256
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 import yaml
 
@@ -54,13 +54,28 @@ class YOLOMetrics(BaseModel):
     iou_threshold: Optional[float] = 0.5
     conf_threshold: Optional[float] = 0.5
 
+class ActionRecommendation(BaseModel):
+    """LLM aksiyon önerisi öğesi."""
+
+    module: str
+    problem: str
+    evidence: str
+    recommendation: str
+    expected_gain: str
+    validation_plan: str
+
+
 class AIAnalysis(BaseModel):
     """LLM analiz sonucu"""
+
     summary: str
     strengths: List[str]
     weaknesses: List[str]
-    action_items: List[str]
-    risk_level: str  # "low", "medium", "high"
+    actions: List[ActionRecommendation]
+    risk: str  # "low", "medium", "high"
+    deploy_profile: Dict[str, Any]
+    notes: Optional[str] = None
+    calibration: Optional[Dict[str, Any]] = None
 
 # =============================================================================
 # ENDPOINTS
@@ -256,8 +271,10 @@ async def upload_results(
                 "summary": "LLM analizi gerçekleştirilemedi.",
                 "strengths": [],
                 "weaknesses": [],
-                "action_items": [],
-                "risk_level": "medium",
+                "actions": [],
+                "risk": "medium",
+                "deploy_profile": {},
+                "notes": str(exc),
                 "error": str(exc),
             }
 
@@ -467,16 +484,35 @@ async def analyze_metrics(metrics: YOLOMetrics):
         # Placeholder analysis
         analysis = AIAnalysis(
             summary="Model performance is moderate with room for improvement.",
-            strengths=["Good precision", "Low loss"],
-            weaknesses=["Low recall", "May need more data"],
-            action_items=[
-                "Lower IoU threshold to 0.3",
-                "Increase training epochs to 200",
-                "Add more augmentation"
+            strengths=["Good precision", "Stable training loss"],
+            weaknesses=["Recall hedefin altında", "Doğrulama verisi sınırlı"],
+            actions=[
+                ActionRecommendation(
+                    module="veri kalitesi",
+                    problem="Recall metrikleri düşük seyrediyor",
+                    evidence="Son 5 epoch boyunca recall %76 civarında plato yaptı",
+                    recommendation="Etiketleme yönergelerini gözden geçirip sınıf başına 50 ek örnek toplayın",
+                    expected_gain="Recall değerinde %6-8 artış",
+                    validation_plan="Yeni veri ile yeniden eğitimden sonra hold-out sette recall ≥ %82",
+                ),
+                ActionRecommendation(
+                    module="eğitim",
+                    problem="mAP@0.5 hedefe yaklaşsa da stabil değil",
+                    evidence="Validation mAP epoch 80 sonrası düşüşte",
+                    recommendation="Cosine LR schedule ile 40 ek epoch çalıştırın",
+                    expected_gain="mAP@0.5 değerinde kalıcı %3 artış",
+                    validation_plan="Ek eğitim sonrası 3 ardışık denemede mAP@0.5 ≥ %82",
+                ),
             ],
-            risk_level="medium"
+            risk="medium",
+            deploy_profile={
+                "release_decision": "hold",
+                "rollout_strategy": "Ek veri toplama tamamlanana kadar staging'de kal",
+                "monitoring_plan": "Yeni veri ile yeniden eğitim sonrası 2 hafta canlı izleme",
+            },
+            notes="LLM analizi devreye alındığında gerçek öneriler ile güncellenecek.",
         )
-        
+
         return analysis
     except Exception as exc:
         logger.exception("Metric analizi başarısız oldu")

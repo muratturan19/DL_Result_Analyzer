@@ -865,184 +865,83 @@ const AIAnalysis = ({ analysis, isLoading }) => {
 
   if (!analysis) return null;
 
-  const actionItems = Array.isArray(analysis.action_items) ? analysis.action_items : [];
+  const actions = Array.isArray(analysis.actions) ? analysis.actions : [];
+  const deployProfile = analysis.deploy_profile || {};
+  const calibration = analysis.calibration;
 
-  const formatLabel = (text) => {
-    if (!text) return '';
-    const normalized = text
-      .toString()
-      .replace(/_/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .toLowerCase();
+  const renderAction = (action, idx) => {
+    if (!action || typeof action !== 'object') {
+      return (
+        <div key={idx} className="action-item">
+          <span className="action-number">{idx + 1}</span>
+          <div className="action-text">{String(action ?? 'Belirtilmedi')}</div>
+        </div>
+      );
+    }
 
-    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+    const {
+      module,
+      problem,
+      evidence,
+      recommendation,
+      expected_gain,
+      validation_plan,
+    } = action;
+
+    return (
+      <div key={idx} className="action-item">
+        <span className="action-number">{idx + 1}</span>
+        <div className="action-text">
+          <div className="action-row">
+            <span className="action-label">Modül:</span>
+            <span>{module || 'Belirtilmedi'}</span>
+          </div>
+          <div className="action-row">
+            <span className="action-label">Problem:</span>
+            <span>{problem || 'Belirtilmedi'}</span>
+          </div>
+          <div className="action-row">
+            <span className="action-label">Kanıt:</span>
+            <span>{evidence || 'Belirtilmedi'}</span>
+          </div>
+          <div className="action-row">
+            <span className="action-label">Öneri:</span>
+            <span>{recommendation || 'Belirtilmedi'}</span>
+          </div>
+          <div className="action-row">
+            <span className="action-label">Beklenen Kazanç:</span>
+            <span>{expected_gain || 'Belirtilmedi'}</span>
+          </div>
+          <div className="action-row">
+            <span className="action-label">Doğrulama Planı:</span>
+            <span>{validation_plan || 'Belirtilmedi'}</span>
+          </div>
+        </div>
+      </div>
+    );
   };
 
-  const renderActionContent = (item) => {
-    if (!item) return null;
+  const deployProfileEntries = Object.entries(deployProfile).filter(([, value]) =>
+    value !== null && value !== undefined && value !== ''
+  );
 
-    if (typeof item === 'string') {
-      return <span>{item}</span>;
-    }
+  const labelMap = {
+    release_decision: 'Yayın Kararı',
+    rollout_strategy: 'Yayın Planı',
+    monitoring_plan: 'İzleme Planı',
+    owner: 'Sorumlu',
+    notes: 'Notlar',
+  };
 
-    if (Array.isArray(item)) {
-      return <span>{item.filter(Boolean).join(' ')}</span>;
-    }
-
-    if (typeof item === 'object') {
-      const getValue = (...keys) => {
-        for (const key of keys) {
-          if (item[key] !== undefined) return item[key];
-          const lowerKey = key.toLowerCase?.();
-          if (lowerKey && item[lowerKey] !== undefined) return item[lowerKey];
-        }
-        return undefined;
-      };
-
-      const structuredProblem = getValue('PROBLEM', 'problem');
-      const structuredReason = getValue('SEBEP', 'reason');
-      const structuredActions = getValue('AKSİYON', 'aksiyon', 'actions', 'steps');
-      const structuredResult = getValue('SONUÇ', 'result', 'impact');
-
-      const hasStructuredTurkish =
-        structuredProblem || structuredReason || structuredActions || structuredResult;
-
-      const renderActionStep = (step) => {
-        if (!step) return null;
-
-        if (typeof step === 'string') {
-          return <p className="action-step-text">{step}</p>;
-        }
-
-        if (Array.isArray(step)) {
-          return (
-            <ul className="action-step-bullets">
-              {step.filter(Boolean).map((subStep, idx) => (
-                <li key={idx}>{subStep}</li>
-              ))}
-            </ul>
-          );
-        }
-
-        if (typeof step === 'object') {
-          const title = step.adım || step.adim || step.step || step.title || step.name;
-          const entries = Object.entries(step).filter(
-            ([key, value]) =>
-              value !== undefined &&
-              value !== null &&
-              value !== '' &&
-              !['adım', 'adim', 'step', 'title', 'name'].includes(key)
-          );
-
-          return (
-            <div className="action-step-structured">
-              {title && <div className="action-step-title">{title}</div>}
-              {entries.length > 0 && (
-                <ul className="action-step-details">
-                  {entries.map(([key, value]) => (
-                    <li key={key}>
-                      <span className="action-step-detail-label">{formatLabel(key)}:</span>
-                      <span className="action-step-detail-value">
-                        {Array.isArray(value) ? value.filter(Boolean).join(', ') : String(value)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          );
-        }
-
-        return <span>{String(step)}</span>;
-      };
-
-      if (hasStructuredTurkish) {
-        const actionsArray = Array.isArray(structuredActions)
-          ? structuredActions
-          : structuredActions
-          ? [structuredActions]
-          : [];
-
-        return (
-          <div className="action-structured">
-            {structuredProblem && (
-              <div className="action-structured-row">
-                <span className="action-structured-label">Problem</span>
-                <span>{structuredProblem}</span>
-              </div>
-            )}
-            {structuredReason && (
-              <div className="action-structured-row">
-                <span className="action-structured-label">Sebep</span>
-                <span>{structuredReason}</span>
-              </div>
-            )}
-            {actionsArray.length > 0 && (
-              <div className="action-structured-row">
-                <span className="action-structured-label">Aksiyon</span>
-                <div className="action-step-list">
-                  {actionsArray.map((step, stepIdx) => (
-                    <div key={stepIdx} className="action-step">
-                      {renderActionStep(step)}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {structuredResult && (
-              <div className="action-structured-row">
-                <span className="action-structured-label">Beklenen Sonuç</span>
-                <span>{structuredResult}</span>
-              </div>
-            )}
-          </div>
-        );
-      }
-
-      const { category, action, reason, expected_impact, impact, description } = item;
-      const hasStructuredFields = category || action || reason || expected_impact || impact;
-
-      if (description && !hasStructuredFields) {
-        return <span>{description}</span>;
-      }
-
-      if (hasStructuredFields) {
-        return (
-          <div className="action-details">
-            {category && <div className="action-category">{category}</div>}
-            {action && (
-              <div className="action-row">
-                <span className="action-label">Aksiyon:</span>
-                <span>{action}</span>
-              </div>
-            )}
-            {reason && (
-              <div className="action-row">
-                <span className="action-label">Gerekçe:</span>
-                <span>{reason}</span>
-              </div>
-            )}
-            {(expected_impact || impact) && (
-              <div className="action-row">
-                <span className="action-label">Beklenen Etki:</span>
-                <span>{expected_impact || impact}</span>
-              </div>
-            )}
-            {description && (
-              <div className="action-row">
-                <span className="action-label">Not:</span>
-                <span>{description}</span>
-              </div>
-            )}
-          </div>
-        );
-      }
-
-      return <span>{JSON.stringify(item)}</span>;
-    }
-
-    return <span>{String(item)}</span>;
+  const renderDeployValue = (key, value) => {
+    if (value === null || value === undefined) return null;
+    const displayLabel = labelMap[key] || key.replace(/_/g, ' ');
+    return (
+      <li key={key}>
+        <span className="deploy-label">{displayLabel}:</span>
+        <span className="deploy-value">{typeof value === 'string' ? value : JSON.stringify(value)}</span>
+      </li>
+    );
   };
 
   return (
@@ -1077,23 +976,38 @@ const AIAnalysis = ({ analysis, isLoading }) => {
       <div className="analysis-section action-items">
         <h3>🎯 Aksiyon Önerileri</h3>
         <div className="actions-list">
-          {actionItems.map((action, idx) => (
-            <div key={idx} className="action-item">
-              <span className="action-number">{idx + 1}</span>
-              <div className="action-text">{renderActionContent(action)}</div>
-            </div>
-          ))}
+          {actions.length > 0 ? (
+            actions.map((action, idx) => renderAction(action, idx))
+          ) : (
+            <p>Henüz aksiyon önerisi bulunmuyor.</p>
+          )}
         </div>
       </div>
 
-      <div className={`risk-badge risk-${analysis.risk_level}`}>
-        Risk Seviyesi: {analysis.risk_level?.toUpperCase?.()}
+      <div className={`risk-badge risk-${analysis.risk}`}>
+        Risk Seviyesi: {analysis.risk?.toUpperCase?.()}
       </div>
 
       {analysis.notes && (
         <div className="analysis-section">
           <h3>📝 Notlar</h3>
           <p>{analysis.notes}</p>
+        </div>
+      )}
+
+      {deployProfileEntries.length > 0 && (
+        <div className="analysis-section">
+          <h3>🚀 Yayın Profili</h3>
+          <ul className="deploy-profile-list">
+            {deployProfileEntries.map(([key, value]) => renderDeployValue(key, value))}
+          </ul>
+        </div>
+      )}
+
+      {calibration && (
+        <div className="analysis-section">
+          <h3>🎯 Kalibrasyon Bulguları</h3>
+          <pre className="calibration-block">{JSON.stringify(calibration, null, 2)}</pre>
         </div>
       )}
     </div>
