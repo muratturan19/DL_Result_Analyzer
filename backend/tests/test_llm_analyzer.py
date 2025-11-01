@@ -249,6 +249,7 @@ class TestLLMAnalyzer:
         assert kwargs["model"] == "gpt-5"
         assert kwargs["reasoning"]["effort"] == "medium"
         assert kwargs["response_format"]["type"] == "json_schema"
+        assert "temperature" not in kwargs
         schema_properties = kwargs["response_format"]["json_schema"]["schema"]["properties"]
         assert "actions" in schema_properties
         assert "deploy_profile" in schema_properties
@@ -318,4 +319,5 @@ class TestLLMAnalyzer:
 
         kwargs = dummy_responses.last_kwargs
         assert kwargs["model"] == "gpt-5-thinking"
+        assert "temperature" not in kwargs
         assert kwargs["reasoning"]["effort"] == "high"
