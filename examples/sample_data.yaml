@@ -1,0 +1,27 @@
+# FKT Potluk (Leather Seat Dent) Detection Dataset
+# YOLO11 Format Dataset Configuration
+
+# Dataset paths (relative to this file)
+path: ../datasets/potluk_dataset  # Root directory
+train: images/train  # Train images
+val: images/val      # Validation images
+test: images/test    # Test images (optional)
+
+# Classes
+nc: 2  # Number of classes
+names:
+  0: potluk  # Dent/defect on leather seat
+  1: temiz   # Clean/normal leather seat
+
+# Dataset Info
+# Total images: ~400
+# Train: ~280 (70%)
+# Val: ~80 (20%)
+# Test: ~40 (10%)
+
+# Annotation notes:
+# - Images captured with factory cameras
+# - Both wide and close-up shots per seat
+# - Various lighting conditions
+# - Bounding boxes around visible dents
+# - Quality control: Manual verification of labels
