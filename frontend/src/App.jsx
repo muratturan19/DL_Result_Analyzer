@@ -867,6 +867,18 @@ const AIAnalysis = ({ analysis, isLoading }) => {
 
   const actionItems = Array.isArray(analysis.action_items) ? analysis.action_items : [];
 
+  const formatLabel = (text) => {
+    if (!text) return '';
+    const normalized = text
+      .toString()
+      .replace(/_/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  };
+
   const renderActionContent = (item) => {
     if (!item) return null;
 
@@ -879,6 +891,115 @@ const AIAnalysis = ({ analysis, isLoading }) => {
     }
 
     if (typeof item === 'object') {
+      const getValue = (...keys) => {
+        for (const key of keys) {
+          if (item[key] !== undefined) return item[key];
+          const lowerKey = key.toLowerCase?.();
+          if (lowerKey && item[lowerKey] !== undefined) return item[lowerKey];
+        }
+        return undefined;
+      };
+
+      const structuredProblem = getValue('PROBLEM', 'problem');
+      const structuredReason = getValue('SEBEP', 'reason');
+      const structuredActions = getValue('AKSİYON', 'aksiyon', 'actions', 'steps');
+      const structuredResult = getValue('SONUÇ', 'result', 'impact');
+
+      const hasStructuredTurkish =
+        structuredProblem || structuredReason || structuredActions || structuredResult;
+
+      const renderActionStep = (step) => {
+        if (!step) return null;
+
+        if (typeof step === 'string') {
+          return <p className="action-step-text">{step}</p>;
+        }
+
+        if (Array.isArray(step)) {
+          return (
+            <ul className="action-step-bullets">
+              {step.filter(Boolean).map((subStep, idx) => (
+                <li key={idx}>{subStep}</li>
+              ))}
+            </ul>
+          );
+        }
+
+        if (typeof step === 'object') {
+          const title = step.adım || step.adim || step.step || step.title || step.name;
+          const entries = Object.entries(step).filter(
+            ([key, value]) =>
+              value !== undefined &&
+              value !== null &&
+              value !== '' &&
+              !['adım', 'adim', 'step', 'title', 'name'].includes(key)
+          );
+
+          return (
+            <div className="action-step-structured">
+              {title && <div className="action-step-title">{title}</div>}
+              {entries.length > 0 && (
+                <ul className="action-step-details">
+                  {entries.map(([key, value]) => (
+                    <li key={key}>
+                      <span className="action-step-detail-label">{formatLabel(key)}:</span>
+                      <span className="action-step-detail-value">
+                        {Array.isArray(value) ? value.filter(Boolean).join(', ') : String(value)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        }
+
+        return <span>{String(step)}</span>;
+      };
+
+      if (hasStructuredTurkish) {
+        const actionsArray = Array.isArray(structuredActions)
+          ? structuredActions
+          : structuredActions
+          ? [structuredActions]
+          : [];
+
+        return (
+          <div className="action-structured">
+            {structuredProblem && (
+              <div className="action-structured-row">
+                <span className="action-structured-label">Problem</span>
+                <span>{structuredProblem}</span>
+              </div>
+            )}
+            {structuredReason && (
+              <div className="action-structured-row">
+                <span className="action-structured-label">Sebep</span>
+                <span>{structuredReason}</span>
+              </div>
+            )}
+            {actionsArray.length > 0 && (
+              <div className="action-structured-row">
+                <span className="action-structured-label">Aksiyon</span>
+                <div className="action-step-list">
+                  {actionsArray.map((step, stepIdx) => (
+                    <div key={stepIdx} className="action-step">
+                      {renderActionStep(step)}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {structuredResult && (
+              <div className="action-structured-row">
+                <span className="action-structured-label">Beklenen Sonuç</span>
+                <span>{structuredResult}</span>
+              </div>
+            )}
+          </div>
+        );
+      }
+
       const { category, action, reason, expected_impact, impact, description } = item;
       const hasStructuredFields = category || action || reason || expected_impact || impact;
 
