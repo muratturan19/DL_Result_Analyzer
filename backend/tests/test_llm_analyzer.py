@@ -1,5 +1,8 @@
 """Tests for LLM analyzer."""
+import json
+
 import pytest
+
 from app.analyzers.llm_analyzer import LLMAnalyzer
 
 
@@ -132,3 +135,139 @@ class TestLLMAnalyzer:
         """Test that response without JSON raises ValueError."""
         with pytest.raises(ValueError, match="Unable to locate JSON object"):
             LLMAnalyzer._parse_structured_output("No JSON here at all")
+
+    def test_openai_responses_payload_and_schema(self, monkeypatch):
+        """Ensure OpenAI responses API payload respects schema and preserves keys."""
+
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+        response_payload = {
+            "summary": "Detaylı özet",
+            "strengths": ["yüksek recall"],
+            "weaknesses": ["düşük precision"],
+            "action_items": [{"description": "threshold düşür"}],
+            "risk_level": "medium",
+            "notes": "Notlar",
+            "actions": {
+                "threshold_tuning": ["confidence 0.25 → 0.18"],
+                "training": ["epoch 100 → 140"],
+            },
+            "deploy_profile": {
+                "release_decision": "delay",
+                "risk": "medium",
+            },
+        }
+        response_text = json.dumps(response_payload)
+
+        class DummyResponses:
+            def __init__(self) -> None:
+                self.last_kwargs = None
+
+            def create(self, **kwargs):
+                self.last_kwargs = kwargs
+
+                class _Response:
+                    output = [
+                        type(
+                            "Out",
+                            (),
+                            {
+                                "content": [
+                                    type(
+                                        "Content",
+                                        (),
+                                        {"text": response_text},
+                                    )()
+                                ]
+                            },
+                        )()
+                    ]
+
+                return _Response()
+
+        dummy_responses = DummyResponses()
+
+        class DummyClient:
+            def __init__(self) -> None:
+                self.responses = dummy_responses
+
+        monkeypatch.setattr(
+            "app.analyzers.llm_analyzer.OpenAI",
+            lambda api_key: DummyClient(),
+        )
+
+        analyzer = LLMAnalyzer(provider="openai")
+        result = analyzer._analyze_with_gpt("prompt")
+
+        kwargs = dummy_responses.last_kwargs
+        assert kwargs["model"] == "gpt-5"
+        assert kwargs["reasoning"]["effort"] == "medium"
+        assert kwargs["response_format"]["type"] == "json_schema"
+        schema_properties = kwargs["response_format"]["json_schema"]["schema"]["properties"]
+        assert "actions" in schema_properties
+        assert "deploy_profile" in schema_properties
+
+        assert result["actions"] == response_payload["actions"]
+        assert result["deploy_profile"] == response_payload["deploy_profile"]
+
+    def test_openai_high_reasoning_switches_model(self, monkeypatch):
+        """High reasoning requests should use the thinking model and effort."""
+
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        monkeypatch.setenv("OPENAI_HIGH_REASONING", "true")
+
+        response_payload = {
+            "summary": "Özet",
+            "strengths": [],
+            "weaknesses": [],
+            "action_items": [],
+            "risk_level": "low",
+            "notes": "",
+            "actions": {},
+            "deploy_profile": {},
+        }
+        response_text = json.dumps(response_payload)
+
+        class DummyResponses:
+            def __init__(self) -> None:
+                self.last_kwargs = None
+
+            def create(self, **kwargs):
+                self.last_kwargs = kwargs
+
+                class _Response:
+                    output = [
+                        type(
+                            "Out",
+                            (),
+                            {
+                                "content": [
+                                    type(
+                                        "Content",
+                                        (),
+                                        {"text": response_text},
+                                    )()
+                                ]
+                            },
+                        )()
+                    ]
+
+                return _Response()
+
+        dummy_responses = DummyResponses()
+
+        class DummyClient:
+            def __init__(self) -> None:
+                self.responses = dummy_responses
+
+        monkeypatch.setattr(
+            "app.analyzers.llm_analyzer.OpenAI",
+            lambda api_key: DummyClient(),
+        )
+
+        analyzer = LLMAnalyzer(provider="openai")
+        analyzer._analyze_with_gpt("prompt")
+
+        kwargs = dummy_responses.last_kwargs
+        assert kwargs["model"] == "gpt-5-thinking"
+        assert kwargs["reasoning"]["effort"] == "high"

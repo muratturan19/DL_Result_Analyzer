@@ -29,12 +29,86 @@ except (ImportError, AttributeError):  # pragma: no cover - fallback for old SDK
     OpenAIAPIError = RuntimeError  # type: ignore[assignment]
 logger = logging.getLogger(__name__)
 
+GPT_ANALYSIS_JSON_SCHEMA: Dict[str, Any] = {
+    "name": "DLRunAnalysis",
+    "schema": {
+        "type": "object",
+        "additionalProperties": True,
+        "properties": {
+            "summary": {"type": "string"},
+            "strengths": {
+                "type": "array",
+                "items": {"type": "string"},
+                "default": [],
+            },
+            "weaknesses": {
+                "type": "array",
+                "items": {"type": "string"},
+                "default": [],
+            },
+            "action_items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": True,
+                    "properties": {
+                        "description": {"type": "string"},
+                        "owner": {"type": "string"},
+                        "due_date": {"type": "string"},
+                    },
+                },
+                "default": [],
+            },
+            "risk_level": {"type": "string"},
+            "notes": {"type": "string"},
+            "actions": {
+                "type": "object",
+                "additionalProperties": True,
+                "properties": {
+                    "threshold_tuning": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "training": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "data": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+            },
+            "deploy_profile": {
+                "type": "object",
+                "additionalProperties": True,
+                "properties": {
+                    "release_decision": {"type": "string"},
+                    "risk": {"type": "string"},
+                    "notes": {"type": "string"},
+                },
+            },
+        },
+        "required": [
+            "summary",
+            "strengths",
+            "weaknesses",
+            "action_items",
+            "risk_level",
+            "notes",
+            "actions",
+            "deploy_profile",
+        ],
+    },
+}
+
 
 class LLMAnalyzer:
     """Analyze YOLO training runs with an LLM backend."""
 
     def __init__(self, provider: Literal["claude", "openai"] = "claude") -> None:
         self.provider = provider
+        self._openai_high_reasoning = False
 
         if provider == "claude":
             api_key_present = bool(os.getenv("CLAUDE_API_KEY"))
@@ -49,6 +123,10 @@ class LLMAnalyzer:
             logger.info(
                 "OpenAI istemcisi oluşturuluyor (api_key_var=%s)",
                 api_key_present,
+            )
+            self._openai_high_reasoning = (
+                os.getenv("OPENAI_HIGH_REASONING", "").strip().lower()
+                in {"1", "true", "yes", "on"}
             )
             if api_key_present:
                 self.client = OpenAI(api_key=api_key)
@@ -70,10 +148,16 @@ class LLMAnalyzer:
                     {"completions": completions_stub},
                 )()
 
+                responses_stub = type(
+                    "ResponsesStub",
+                    (),
+                    {"create": staticmethod(_raise_missing_key)},
+                )()
+
                 self.client = type(
                     "OpenAIStub",
                     (),
-                    {"chat": chat_stub},
+                    {"chat": chat_stub, "responses": responses_stub},
                 )()
 
     @staticmethod
@@ -324,6 +408,11 @@ class LLMAnalyzer:
 
         structured["action_items"] = normalised_action_items
 
+        extra_fields = {
+            key: value for key, value in payload.items() if key not in structured
+        }
+        structured.update(extra_fields)
+
         return structured
 
     def analyze(
@@ -474,14 +563,31 @@ class LLMAnalyzer:
             "sentences except for metric names or hyperparameters."
         )
 
+        model_name = "gpt-5-thinking" if self._openai_high_reasoning else "gpt-5"
+        reasoning_effort = "high" if self._openai_high_reasoning else "medium"
+
         try:
-            response = self.client.chat.completions.create(  # type: ignore[attr-defined]
-                model="gpt-4o",
+            response = self.client.responses.create(  # type: ignore[attr-defined]
+                model=model_name,
                 temperature=0,
-                response_format={"type": "json_object"},
-                messages=[
-                    {"role": "system", "content": system_instruction},
-                    {"role": "user", "content": prompt},
+                reasoning={"effort": reasoning_effort},
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": GPT_ANALYSIS_JSON_SCHEMA,
+                },
+                input=[
+                    {
+                        "role": "system",
+                        "content": [
+                            {"type": "text", "text": system_instruction},
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                        ],
+                    },
                 ],
             )
         except (TimeoutError, OpenAIConnectionError, OpenAIAPIError) as exc:  # pragma: no cover - network calls
@@ -489,8 +595,15 @@ class LLMAnalyzer:
             raise RuntimeError(f"OpenAI request failed: {exc}") from exc
 
         raw_text = ""
-        if getattr(response, "choices", None):
-            raw_text = response.choices[0].message.content or ""
+        output_blocks = getattr(response, "output", None) or []
+        if output_blocks:
+            first_output = output_blocks[0]
+            content_blocks = getattr(first_output, "content", None) or []
+            if content_blocks:
+                raw_text = getattr(content_blocks[0], "text", "") or ""
+
+        if not raw_text and hasattr(response, "output_text"):
+            raw_text = getattr(response, "output_text", "") or ""
 
         logger.debug(
             "OpenAI yanıtı alındı (uzunluk=%s karakter)",
