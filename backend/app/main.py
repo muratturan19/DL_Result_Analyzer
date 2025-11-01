@@ -67,7 +67,8 @@ async def root():
 async def upload_results(
     results_csv: UploadFile = File(...),
     config_yaml: Optional[UploadFile] = File(None),
-    graphs: Optional[List[UploadFile]] = File(None)
+    graphs: Optional[List[UploadFile]] = File(None),
+    llm_provider: str = "claude"
 ):
     """
     YOLO eğitim sonuçlarını upload et
@@ -140,7 +141,13 @@ async def upload_results(
 
         analysis = {}
         try:
-            provider = os.getenv("LLM_PROVIDER", "claude")
+            # Frontend'ten gelen provider'ı kullan, fallback olarak env'den oku
+            provider = llm_provider or os.getenv("LLM_PROVIDER", "claude")
+            # Geçerli provider kontrolü
+            if provider not in ["claude", "openai"]:
+                logger.warning("Geçersiz LLM provider: %s, claude kullanılacak", provider)
+                provider = "claude"
+
             analyzer = LLMAnalyzer(provider=provider)  # type: ignore[arg-type]
             logger.info("LLM analizi başlatılıyor: provider=%s", provider)
             analysis = analyzer.analyze(metrics, config)
