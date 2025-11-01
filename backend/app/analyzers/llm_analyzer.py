@@ -46,57 +46,64 @@ GPT_ANALYSIS_JSON_SCHEMA: Dict[str, Any] = {
                 "items": {"type": "string"},
                 "default": [],
             },
-            "action_items": {
+            "actions": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "additionalProperties": True,
+                    "required": [
+                        "module",
+                        "problem",
+                        "evidence",
+                        "recommendation",
+                        "expected_gain",
+                        "validation_plan",
+                    ],
                     "properties": {
-                        "description": {"type": "string"},
-                        "owner": {"type": "string"},
-                        "due_date": {"type": "string"},
+                        "module": {"type": "string"},
+                        "problem": {"type": "string"},
+                        "evidence": {"type": "string"},
+                        "recommendation": {"type": "string"},
+                        "expected_gain": {"type": "string"},
+                        "validation_plan": {"type": "string"},
                     },
                 },
                 "default": [],
             },
-            "risk_level": {"type": "string"},
-            "notes": {"type": "string"},
-            "actions": {
-                "type": "object",
-                "additionalProperties": True,
-                "properties": {
-                    "threshold_tuning": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
-                    "training": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
-                    "data": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
-                },
-            },
+            "risk": {"type": "string"},
             "deploy_profile": {
                 "type": "object",
                 "additionalProperties": True,
                 "properties": {
                     "release_decision": {"type": "string"},
-                    "risk": {"type": "string"},
+                    "rollout_strategy": {"type": "string"},
+                    "monitoring_plan": {"type": "string"},
+                    "owner": {"type": "string"},
                     "notes": {"type": "string"},
                 },
             },
+            "notes": {"type": "string"},
+            "calibration": {
+                "type": "object",
+                "additionalProperties": True,
+            },
+            # Legacy compatibility keys
+            "action_items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": True,
+                },
+                "default": [],
+            },
+            "risk_level": {"type": "string"},
         },
         "required": [
             "summary",
             "strengths",
             "weaknesses",
-            "action_items",
-            "risk_level",
-            "notes",
             "actions",
+            "risk",
             "deploy_profile",
         ],
     },
@@ -385,31 +392,55 @@ class LLMAnalyzer:
             "summary": str(payload.get("summary", "")).strip(),
             "strengths": LLMAnalyzer._normalise_list(payload.get("strengths")),
             "weaknesses": LLMAnalyzer._normalise_list(payload.get("weaknesses")),
-            "action_items": payload.get("action_items") or [],
-            "risk_level": str(payload.get("risk_level", "")).strip(),
-            "notes": str(payload.get("notes", "")).strip(),
         }
 
-        action_items = structured["action_items"]
-        if not isinstance(action_items, list):
-            action_items = [action_items]
+        raw_actions: Any = payload.get("actions")
+        legacy_actions: Any = None
+        if raw_actions is None and "action_items" in payload:
+            legacy_actions = payload.get("action_items")
+            raw_actions = legacy_actions
 
-        normalised_action_items: List[Dict[str, Any]] = []
-        for item in action_items:
-            if isinstance(item, dict):
-                normalised_action_items.append(item)
-                continue
+        if raw_actions is None:
+            normalised_actions: List[Dict[str, Any]] = []
+        elif isinstance(raw_actions, list):
+            normalised_actions = []
+            for item in raw_actions:
+                if isinstance(item, dict):
+                    normalised_actions.append(item)
+                elif isinstance(item, str):
+                    normalised_actions.append({"recommendation": item.strip()})
+                else:
+                    normalised_actions.append({"value": item})
+        elif isinstance(raw_actions, dict):
+            normalised_actions = [raw_actions]
+        else:
+            normalised_actions = [{"value": raw_actions}]
 
-            if isinstance(item, str):
-                normalised_action_items.append({"description": item.strip()})
-                continue
+        structured["actions"] = normalised_actions
+        if legacy_actions is not None and "action_items" not in structured:
+            structured["action_items"] = normalised_actions
 
-            normalised_action_items.append({"value": item})
+        risk_value = payload.get("risk") or payload.get("risk_level") or ""
+        structured["risk"] = str(risk_value).strip()
+        if "risk_level" in payload and "risk_level" not in structured:
+            structured["risk_level"] = str(payload.get("risk_level", "")).strip()
 
-        structured["action_items"] = normalised_action_items
+        notes_value = payload.get("notes")
+        structured["notes"] = str(notes_value).strip() if notes_value is not None else ""
+
+        deploy_profile = payload.get("deploy_profile")
+        if isinstance(deploy_profile, dict):
+            structured["deploy_profile"] = deploy_profile
+        else:
+            structured["deploy_profile"] = {}
+
+        if "calibration" in payload:
+            structured["calibration"] = payload.get("calibration")
 
         extra_fields = {
-            key: value for key, value in payload.items() if key not in structured
+            key: value
+            for key, value in payload.items()
+            if key not in structured
         }
         structured.update(extra_fields)
 
@@ -513,9 +544,11 @@ class LLMAnalyzer:
             "You are an assistant that strictly replies with ONLY a valid JSON object. "
             "CRITICAL: Return PURE JSON ONLY - NO markdown, NO code blocks, NO ```json, NO explanatory text. "
             "Start your response with { and end with }. "
-            "The JSON must contain exactly these keys: "
-            '"summary", "strengths", "weaknesses", "action_items", "risk_level", and "notes". '
-            'The "action_items" value must be a JSON array of objects. '
+            "The JSON must contain these keys: "
+            '"summary", "strengths", "weaknesses", "actions", "risk", "deploy_profile", and "notes". '
+            'Include "calibration" only when you have calibration artefacts to share. '
+            'The "actions" value must be an array of objects with the keys '
+            '"module", "problem", "evidence", "recommendation", "expected_gain", and "validation_plan". '
             "Ensure all strings are properly escaped, especially quotes and newlines. "
             "All textual content must be written entirely in fluent Turkish; avoid English wording "
             "except for metric names or hyperparameters."
@@ -557,8 +590,9 @@ class LLMAnalyzer:
         system_instruction = (
             "You are an assistant that returns thorough analyses as JSON. "
             'Respond with an object containing "summary", "strengths", "weaknesses", '
-            '"action_items", "risk_level", and "notes". Ensure "action_items" is an array of '
-            "objects with actionable guidance. "
+            '"actions", "risk", "deploy_profile", and "notes". Provide "calibration" only when '
+            "you have artefacts to share. Ensure \"actions\" is an array of objects containing the "
+            "keys module, problem, evidence, recommendation, expected_gain, and validation_plan. "
             "All textual content must be produced entirely in natural Turkish; avoid English "
             "sentences except for metric names or hyperparameters."
         )

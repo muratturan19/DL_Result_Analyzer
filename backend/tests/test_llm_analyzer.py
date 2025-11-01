@@ -92,8 +92,22 @@ class TestLLMAnalyzer:
             "summary": "Test summary",
             "strengths": ["strength1", "strength2"],
             "weaknesses": ["weakness1"],
-            "action_items": [{"description": "action1"}],
-            "risk_level": "medium",
+            "actions": [
+                {
+                    "module": "veri",
+                    "problem": "Eksik örnek",
+                    "evidence": "Class A recall %65",
+                    "recommendation": "Sınıf başına 30 yeni örnek topla",
+                    "expected_gain": "Recall +%5",
+                    "validation_plan": "Yeni veri ile hold-out değerlendirmesi"
+                }
+            ],
+            "risk": "medium",
+            "deploy_profile": {
+                "release_decision": "delay",
+                "rollout_strategy": "Ek veri tamamlanana kadar staging",
+                "monitoring_plan": "Her gün recall ölçümü"
+            },
             "notes": "Test notes"
         }
         """
@@ -103,8 +117,10 @@ class TestLLMAnalyzer:
         assert result["summary"] == "Test summary"
         assert result["strengths"] == ["strength1", "strength2"]
         assert result["weaknesses"] == ["weakness1"]
-        assert result["risk_level"] == "medium"
+        assert result["risk"] == "medium"
         assert result["notes"] == "Test notes"
+        assert result["actions"][0]["module"] == "veri"
+        assert result["deploy_profile"]["release_decision"] == "delay"
 
     def test_parse_structured_output_json_in_text(self):
         """Test parsing JSON embedded in text."""
@@ -114,8 +130,9 @@ class TestLLMAnalyzer:
             "summary": "Embedded JSON",
             "strengths": ["good"],
             "weaknesses": ["bad"],
-            "action_items": [],
-            "risk_level": "low",
+            "actions": [],
+            "risk": "low",
+            "deploy_profile": {},
             "notes": ""
         }
         Additional text here.
@@ -126,6 +143,28 @@ class TestLLMAnalyzer:
         assert result["summary"] == "Embedded JSON"
         assert result["strengths"] == ["good"]
         assert result["weaknesses"] == ["bad"]
+        assert result["risk"] == "low"
+
+    def test_parse_structured_output_preserves_calibration(self):
+        """Calibration artefacts should pass through untouched."""
+
+        response = {
+            "summary": "Calibrated",
+            "strengths": [],
+            "weaknesses": [],
+            "actions": [],
+            "risk": "low",
+            "deploy_profile": {"release_decision": "go"},
+            "calibration": {
+                "temperature": 1.2,
+                "plots": ["calibration_plot.png"],
+            },
+        }
+
+        result = LLMAnalyzer._parse_structured_output(json.dumps(response))
+
+        assert "calibration" in result
+        assert result["calibration"]["temperature"] == 1.2
 
     def test_parse_structured_output_empty_raises_error(self):
         """Test that empty response raises ValueError."""
@@ -146,17 +185,23 @@ class TestLLMAnalyzer:
             "summary": "Detaylı özet",
             "strengths": ["yüksek recall"],
             "weaknesses": ["düşük precision"],
-            "action_items": [{"description": "threshold düşür"}],
-            "risk_level": "medium",
+            "actions": [
+                {
+                    "module": "eşik",
+                    "problem": "Confidence yüksek",
+                    "evidence": "PR eğrisi 0.25 üstünde düşüyor",
+                    "recommendation": "Confidence 0.25 → 0.18",
+                    "expected_gain": "Precision +%3",
+                    "validation_plan": "Yeni eşikle A/B testi",
+                }
+            ],
+            "risk": "medium",
             "notes": "Notlar",
-            "actions": {
-                "threshold_tuning": ["confidence 0.25 → 0.18"],
-                "training": ["epoch 100 → 140"],
-            },
             "deploy_profile": {
                 "release_decision": "delay",
-                "risk": "medium",
+                "rollout_strategy": "Staging'de kal",
             },
+            "calibration": {"chart": "calibration.png"},
         }
         response_text = json.dumps(response_payload)
 
@@ -207,9 +252,12 @@ class TestLLMAnalyzer:
         schema_properties = kwargs["response_format"]["json_schema"]["schema"]["properties"]
         assert "actions" in schema_properties
         assert "deploy_profile" in schema_properties
+        assert "risk" in schema_properties
 
         assert result["actions"] == response_payload["actions"]
         assert result["deploy_profile"] == response_payload["deploy_profile"]
+        assert result["calibration"] == response_payload["calibration"]
+        assert result["risk"] == response_payload["risk"]
 
     def test_openai_high_reasoning_switches_model(self, monkeypatch):
         """High reasoning requests should use the thinking model and effort."""
@@ -221,10 +269,9 @@ class TestLLMAnalyzer:
             "summary": "Özet",
             "strengths": [],
             "weaknesses": [],
-            "action_items": [],
-            "risk_level": "low",
+            "actions": [],
+            "risk": "low",
             "notes": "",
-            "actions": {},
             "deploy_profile": {},
         }
         response_text = json.dumps(response_payload)

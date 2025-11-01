@@ -6,7 +6,7 @@ MODULE CHECKLIST:
 - Evaluator: sonuç metriklerini (Precision {precision}, Recall {recall}, mAP@0.5 {map50}, F1 {f1}) hedeflerle kıyasla, başarının kanıtını derle.
 - Threshold_tuner: inference ayarlarını (confidence, IoU, NMS vb.) sonuç dosyalarından çıkar ve ayarlama önerileri oluştur.
 - Calibration: sonuç dağılımlarını ve hataları gözden geçir; yanlış kalibrasyon varsa sayısal düzeltmeler belirt.
-- Actions_builder: tüm önerileri JSON `action_items` dizisinde, her biri için `description`, `evidence`, `expected_gain`, `owner` (varsa) ve `due_date` (varsa) alanlarıyla yaz.
+- Actions_builder: tüm önerileri JSON `actions` dizisinde, her biri için `module`, `problem`, `evidence`, `recommendation`, `expected_gain` ve `validation_plan` alanlarıyla yaz.
 - Reporter: özet ve risk profili üret, deploy_profile alanını release kararını destekleyecek sayısal içgörülerle doldur.
 
 REQUIRED ARTEFACTS TO CITE:
@@ -19,10 +19,10 @@ REQUIRED ARTEFACTS TO CITE:
 
 SCHEMA REMINDERS:
 - ÇIKTI MUTLAKA SAF JSON OLSUN; kod bloğu veya düz metin ekleme.
-- Zorunlu anahtarlar: `summary`, `strengths`, `weaknesses`, `action_items`, `risk_level`, `notes`, `actions`, `deploy_profile`.
-- `action_items` bir dizi olmalı; her öğe `description`, `evidence`, `expected_gain`, `owner`, `due_date` alanlarını içermeli.
-- `actions` nesnesi modül bazlı kontrol listesi (evaluator, threshold_tuner, calibration, actions_builder, reporter) olarak doldurulmalı.
-- `deploy_profile` `release_decision`, `risk`, `notes` alanlarını içermeli ve metriklere referans vermeli.
+- Zorunlu anahtarlar: `summary`, `strengths`, `weaknesses`, `actions`, `risk`, `deploy_profile`, `notes`.
+- `actions` bir dizi olmalı; her öğe `module`, `problem`, `evidence`, `recommendation`, `expected_gain`, `validation_plan` alanlarını içermeli.
+- `calibration` alanını yalnızca spesifik kalibrasyon deneyleri veya artefaktları varsa ekle.
+- `deploy_profile` `release_decision`, `rollout_strategy`, `monitoring_plan`, gerekirse ek `notes` alanlarını içermeli ve metriklere referans vermeli.
 
 GPT-5 USAGE NOTES:
 - Bu istem OpenAI GPT-5 yanıtları için optimize edilmiştir; reasoning effort = medium, sıcaklık = 0.

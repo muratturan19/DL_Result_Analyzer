@@ -51,8 +51,9 @@ class TestAPI:
         assert "summary" in data
         assert "strengths" in data
         assert "weaknesses" in data
-        assert "action_items" in data
-        assert "risk_level" in data
+        assert "actions" in data
+        assert "risk" in data
+        assert "deploy_profile" in data
 
     def test_analyze_metrics_invalid_payload(self, client):
         """Test analyze metrics endpoint with invalid payload."""
