@@ -717,10 +717,61 @@ const AIAnalysis = ({ analysis, isLoading }) => {
 
   const actionItems = Array.isArray(analysis.action_items) ? analysis.action_items : [];
 
-  const renderActionText = (item) => {
-    if (typeof item === 'string') return item;
-    if (item?.description) return item.description;
-    return JSON.stringify(item);
+  const renderActionContent = (item) => {
+    if (!item) return null;
+
+    if (typeof item === 'string') {
+      return <span>{item}</span>;
+    }
+
+    if (Array.isArray(item)) {
+      return <span>{item.filter(Boolean).join(' ')}</span>;
+    }
+
+    if (typeof item === 'object') {
+      const { category, action, reason, expected_impact, impact, description } = item;
+      const hasStructuredFields = category || action || reason || expected_impact || impact;
+
+      if (description && !hasStructuredFields) {
+        return <span>{description}</span>;
+      }
+
+      if (hasStructuredFields) {
+        return (
+          <div className="action-details">
+            {category && <div className="action-category">{category}</div>}
+            {action && (
+              <div className="action-row">
+                <span className="action-label">Aksiyon:</span>
+                <span>{action}</span>
+              </div>
+            )}
+            {reason && (
+              <div className="action-row">
+                <span className="action-label">Gerekçe:</span>
+                <span>{reason}</span>
+              </div>
+            )}
+            {(expected_impact || impact) && (
+              <div className="action-row">
+                <span className="action-label">Beklenen Etki:</span>
+                <span>{expected_impact || impact}</span>
+              </div>
+            )}
+            {description && (
+              <div className="action-row">
+                <span className="action-label">Not:</span>
+                <span>{description}</span>
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      return <span>{JSON.stringify(item)}</span>;
+    }
+
+    return <span>{String(item)}</span>;
   };
 
   return (
@@ -758,7 +809,7 @@ const AIAnalysis = ({ analysis, isLoading }) => {
           {actionItems.map((action, idx) => (
             <div key={idx} className="action-item">
               <span className="action-number">{idx + 1}</span>
-              <span className="action-text">{renderActionText(action)}</span>
+              <div className="action-text">{renderActionContent(action)}</div>
             </div>
           ))}
         </div>
