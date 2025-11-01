@@ -543,11 +543,43 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
     graphs: [],
     best: null
   });
+  const [projectInfo, setProjectInfo] = useState({
+    projectName: '',
+    shortDescription: '',
+    classCount: '',
+    trainingMethod: '',
+    projectFocus: '',
+    trainingCode: null
+  });
+
+  const methodOptions = [
+    { value: 'yolov8-s', label: 'YOLOv8-S' },
+    { value: 'yolov8-m', label: 'YOLOv8-M' },
+    { value: 'yolov8-l', label: 'YOLOv8-L' },
+    { value: 'yolov8-seg', label: 'YOLOv8-Seg' },
+    { value: 'yolov11-efficientnet', label: 'YOLO11-EfficientNet' },
+    { value: 'yolov11-seg', label: 'YOLO11-Seg' }
+  ];
+
+  const focusOptions = [
+    { value: 'recall', label: 'Recall Öncelikli' },
+    { value: 'precision', label: 'Precision Öncelikli' },
+    { value: 'f1', label: 'F1 Dengesi' },
+    { value: 'map50', label: 'mAP@0.5 Maksimizasyonu' },
+    { value: 'latency', label: 'Çıkarım Hızı / Gecikme' }
+  ];
 
   const updateFiles = (patch) => {
     const updated = { ...files, ...patch };
     setFiles(updated);
     onArtifactsUpdate?.(updated);
+  };
+
+  const updateProjectInfo = (key, value) => {
+    setProjectInfo((prev) => ({
+      ...prev,
+      [key]: value
+    }));
   };
 
   const handleSubmit = async (e) => {
@@ -560,6 +592,25 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
     if (files.best) formData.append('best_model', files.best);
     files.graphs.forEach((graph) => formData.append('graphs', graph));
     formData.append('llm_provider', llmProvider);
+
+    if (projectInfo.projectName.trim()) {
+      formData.append('project_name', projectInfo.projectName.trim());
+    }
+    if (projectInfo.shortDescription.trim()) {
+      formData.append('short_description', projectInfo.shortDescription.trim());
+    }
+    if (projectInfo.classCount) {
+      formData.append('class_count', projectInfo.classCount);
+    }
+    if (projectInfo.trainingMethod) {
+      formData.append('training_method', projectInfo.trainingMethod);
+    }
+    if (projectInfo.projectFocus) {
+      formData.append('project_focus', projectInfo.projectFocus);
+    }
+    if (projectInfo.trainingCode) {
+      formData.append('training_code', projectInfo.trainingCode);
+    }
 
     try {
       const response = await fetch('http://localhost:8000/api/upload/results', {
@@ -578,45 +629,144 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
     <div className="uploader-card">
       <h2>📤 YOLO Sonuçlarını Yükle</h2>
       <form onSubmit={handleSubmit}>
-        <div className="file-input">
-          <label>results.csv:</label>
-          <input
-            type="file"
-            accept=".csv"
-            onChange={(e) => updateFiles({ csv: e.target.files?.[0] || null })}
-            disabled={isLoading}
-          />
-        </div>
+        <div className="uploader-grid">
+          <div className="uploader-column">
+            <div className="file-input">
+              <label htmlFor="resultsCsv">results.csv:</label>
+              <input
+                id="resultsCsv"
+                type="file"
+                accept=".csv"
+                onChange={(e) => updateFiles({ csv: e.target.files?.[0] || null })}
+                disabled={isLoading}
+              />
+            </div>
 
-        <div className="file-input">
-          <label>args.yaml (opsiyonel):</label>
-          <input
-            type="file"
-            accept=".yaml,.yml"
-            onChange={(e) => updateFiles({ yaml: e.target.files?.[0] || null })}
-            disabled={isLoading}
-          />
-        </div>
+            <div className="file-input">
+              <label htmlFor="argsYaml">args.yaml (opsiyonel):</label>
+              <input
+                id="argsYaml"
+                type="file"
+                accept=".yaml,.yml"
+                onChange={(e) => updateFiles({ yaml: e.target.files?.[0] || null })}
+                disabled={isLoading}
+              />
+            </div>
 
-        <div className="file-input">
-          <label>best.pt (opsiyonel):</label>
-          <input
-            type="file"
-            accept=".pt"
-            onChange={(e) => updateFiles({ best: e.target.files?.[0] || null })}
-            disabled={isLoading}
-          />
-        </div>
+            <div className="file-input">
+              <label htmlFor="bestModel">best.pt (opsiyonel):</label>
+              <input
+                id="bestModel"
+                type="file"
+                accept=".pt"
+                onChange={(e) => updateFiles({ best: e.target.files?.[0] || null })}
+                disabled={isLoading}
+              />
+            </div>
 
-        <div className="file-input">
-          <label>Grafikler (opsiyonel):</label>
-          <input
-            type="file"
-            accept=".png,.jpg"
-            multiple
-            onChange={(e) => updateFiles({ graphs: Array.from(e.target.files || []) })}
-            disabled={isLoading}
-          />
+            <div className="file-input">
+              <label htmlFor="graphs">Grafikler (opsiyonel):</label>
+              <input
+                id="graphs"
+                type="file"
+                accept=".png,.jpg"
+                multiple
+                onChange={(e) => updateFiles({ graphs: Array.from(e.target.files || []) })}
+                disabled={isLoading}
+              />
+            </div>
+          </div>
+
+          <div className="uploader-column uploader-metadata">
+            <div className="input-group">
+              <label htmlFor="projectName">Proje Adı</label>
+              <input
+                id="projectName"
+                type="text"
+                placeholder="Örn. FKT Potluk Tespiti"
+                value={projectInfo.projectName}
+                onChange={(e) => updateProjectInfo('projectName', e.target.value)}
+                disabled={isLoading}
+              />
+            </div>
+
+            <div className="input-group">
+              <label htmlFor="shortDescription">Kısa Tanım</label>
+              <textarea
+                id="shortDescription"
+                placeholder="Modelin odağını ve veri setini kısaca anlatın"
+                value={projectInfo.shortDescription}
+                onChange={(e) => updateProjectInfo('shortDescription', e.target.value)}
+                disabled={isLoading}
+                rows={3}
+              />
+            </div>
+
+            <div className="input-row">
+              <div className="input-group">
+                <label htmlFor="classCount">Class Sayısı</label>
+                <input
+                  id="classCount"
+                  type="number"
+                  min="1"
+                  placeholder="Örn. 2"
+                  value={projectInfo.classCount}
+                  onChange={(e) => updateProjectInfo('classCount', e.target.value)}
+                  disabled={isLoading}
+                />
+              </div>
+
+              <div className="input-group">
+                <label htmlFor="projectFocus">Proje Odağı</label>
+                <select
+                  id="projectFocus"
+                  value={projectInfo.projectFocus}
+                  onChange={(e) => updateProjectInfo('projectFocus', e.target.value)}
+                  disabled={isLoading}
+                >
+                  <option value="">Seçiniz</option>
+                  {focusOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="input-row">
+              <div className="input-group">
+                <label htmlFor="trainingMethod">Kullanılan Metot</label>
+                <select
+                  id="trainingMethod"
+                  value={projectInfo.trainingMethod}
+                  onChange={(e) => updateProjectInfo('trainingMethod', e.target.value)}
+                  disabled={isLoading}
+                >
+                  <option value="">Seçiniz</option>
+                  {methodOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="file-input compact">
+                <label htmlFor="trainingCode">Eğitim Kodu (opsiyonel):</label>
+                <input
+                  id="trainingCode"
+                  type="file"
+                  accept=".py,.ipynb,.txt"
+                  onChange={(e) => updateProjectInfo('trainingCode', e.target.files?.[0] || null)}
+                  disabled={isLoading}
+                />
+                {projectInfo.trainingCode && (
+                  <span className="file-hint">Seçildi: {projectInfo.trainingCode.name}</span>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="llm-provider-section">

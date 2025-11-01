@@ -41,6 +41,12 @@ Recall: {recall}%
 mAP@0.5: {map50}%
 F1: {f1}%
 
+📁 PROJE BAĞLAMI:
+{project_context}
+
+🧾 EĞİTİM KODU (ilk 4000 karakter):
+{training_code}
+
 ⚙️ CONFIG:
 {config}
 
@@ -64,6 +70,7 @@ F1: {f1}%
 
 🧠 BAĞLAM NOTLARI:
 - Proje: FKT deri koltuk potluk tespiti (YOLO11 tabanlı)
+- Case study: leather seat dent detection for premium automotive seats
 - Sınıflar: 0=potluk (kusurlu), 1=temiz (kusursuz)
 - Hedefler: Recall≥85%, Precision≥75%, F1≥80%
 - Potluk kaçırmamak öncelikli, false positive'ler ticari maliyet yaratır
