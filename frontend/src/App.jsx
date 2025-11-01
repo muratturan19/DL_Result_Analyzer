@@ -5,7 +5,7 @@ import './App.css';
 // COMPONENTS (Ayrı dosyalarda olacak)
 // =============================================================================
 
-const FileUploader = ({ onUpload }) => {
+const FileUploader = ({ onUpload, isLoading, llmProvider, setLlmProvider }) => {
   const [files, setFiles] = useState({
     csv: null,
     yaml: null,
@@ -14,11 +14,12 @@ const FileUploader = ({ onUpload }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     const formData = new FormData();
     if (files.csv) formData.append('results_csv', files.csv);
     if (files.yaml) formData.append('config_yaml', files.yaml);
     files.graphs.forEach(graph => formData.append('graphs', graph));
+    formData.append('llm_provider', llmProvider);
 
     try {
       const response = await fetch('http://localhost:8000/api/upload/results', {
@@ -29,6 +30,7 @@ const FileUploader = ({ onUpload }) => {
       onUpload(data);
     } catch (error) {
       console.error('Upload failed:', error);
+      onUpload({ error: error.message });
     }
   };
 
@@ -38,34 +40,71 @@ const FileUploader = ({ onUpload }) => {
       <form onSubmit={handleSubmit}>
         <div className="file-input">
           <label>results.csv:</label>
-          <input 
-            type="file" 
+          <input
+            type="file"
             accept=".csv"
             onChange={(e) => setFiles({...files, csv: e.target.files[0]})}
+            disabled={isLoading}
           />
         </div>
-        
+
         <div className="file-input">
           <label>args.yaml (opsiyonel):</label>
-          <input 
-            type="file" 
+          <input
+            type="file"
             accept=".yaml,.yml"
             onChange={(e) => setFiles({...files, yaml: e.target.files[0]})}
+            disabled={isLoading}
           />
         </div>
-        
+
         <div className="file-input">
           <label>Grafikler (opsiyonel):</label>
-          <input 
-            type="file" 
+          <input
+            type="file"
             accept=".png,.jpg"
             multiple
             onChange={(e) => setFiles({...files, graphs: Array.from(e.target.files)})}
+            disabled={isLoading}
           />
         </div>
-        
-        <button type="submit" className="btn-primary">
-          Analiz Et 🚀
+
+        <div className="llm-provider-section">
+          <label className="llm-provider-label">🤖 AI Sağlayıcı:</label>
+          <div className="llm-provider-options">
+            <label className={`provider-option ${llmProvider === 'claude' ? 'selected' : ''}`}>
+              <input
+                type="radio"
+                name="llm_provider"
+                value="claude"
+                checked={llmProvider === 'claude'}
+                onChange={(e) => setLlmProvider(e.target.value)}
+                disabled={isLoading}
+              />
+              <span className="provider-badge claude">
+                <span className="provider-icon">🧠</span>
+                Claude
+              </span>
+            </label>
+            <label className={`provider-option ${llmProvider === 'openai' ? 'selected' : ''}`}>
+              <input
+                type="radio"
+                name="llm_provider"
+                value="openai"
+                checked={llmProvider === 'openai'}
+                onChange={(e) => setLlmProvider(e.target.value)}
+                disabled={isLoading}
+              />
+              <span className="provider-badge openai">
+                <span className="provider-icon">⚡</span>
+                OpenAI
+              </span>
+            </label>
+          </div>
+        </div>
+
+        <button type="submit" className="btn-primary" disabled={isLoading || !files.csv}>
+          {isLoading ? '⏳ Analiz Ediliyor...' : 'Analiz Et 🚀'}
         </button>
       </form>
     </div>
@@ -109,11 +148,58 @@ const MetricsDisplay = ({ metrics }) => {
   );
 };
 
+const LoadingStatus = ({ status }) => {
+  if (!status) return null;
+
+  const statusConfig = {
+    uploading: {
+      icon: '📤',
+      text: 'Dosyalar yükleniyor...',
+      class: 'status-uploading'
+    },
+    parsing: {
+      icon: '📊',
+      text: 'Metrikler analiz ediliyor...',
+      class: 'status-parsing'
+    },
+    analyzing: {
+      icon: '🤖',
+      text: 'AI analizi yapılıyor...',
+      class: 'status-analyzing'
+    },
+    complete: {
+      icon: '✅',
+      text: 'Analiz tamamlandı!',
+      class: 'status-complete'
+    },
+    error: {
+      icon: '❌',
+      text: 'Bir hata oluştu',
+      class: 'status-error'
+    }
+  };
+
+  const config = statusConfig[status] || statusConfig.analyzing;
+
+  return (
+    <div className={`loading-status ${config.class}`}>
+      <div className="loading-spinner">
+        <div className="spinner-icon">{config.icon}</div>
+        <div className="spinner-animation"></div>
+      </div>
+      <div className="loading-text">{config.text}</div>
+      <div className="loading-bar">
+        <div className="loading-bar-fill"></div>
+      </div>
+    </div>
+  );
+};
+
 const AIAnalysis = ({ analysis, isLoading }) => {
   if (isLoading) {
-    return <div className="loading">🤖 AI analiz yapıyor...</div>;
+    return <LoadingStatus status="analyzing" />;
   }
-  
+
   if (!analysis) return null;
 
   return (
@@ -172,7 +258,9 @@ function App() {
   const [metrics, setMetrics] = useState(null);
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState(null);
   const [error, setError] = useState(null);
+  const [llmProvider, setLlmProvider] = useState('claude');
 
   const toNumber = (value, fallback = 0) => {
     const parsed = Number(value);
@@ -183,10 +271,23 @@ function App() {
     console.log('Upload response:', uploadResponse);
 
     if (!uploadResponse) {
+      setLoading(false);
+      setLoadingStatus(null);
+      return;
+    }
+
+    // Check for upload errors
+    if (uploadResponse.error) {
+      setError(uploadResponse.error);
+      setLoading(false);
+      setLoadingStatus('error');
+      setTimeout(() => setLoadingStatus(null), 3000);
       return;
     }
 
     setError(null);
+    setLoading(true);
+    setLoadingStatus('parsing');
 
     const { metrics: responseMetrics, analysis: responseAnalysis, config: responseConfig } = uploadResponse;
 
@@ -196,7 +297,11 @@ function App() {
 
     if (responseAnalysis) {
       setAnalysis(responseAnalysis);
-      setLoading(false);
+      setLoadingStatus('complete');
+      setTimeout(() => {
+        setLoading(false);
+        setLoadingStatus(null);
+      }, 1500);
       return;
     }
 
@@ -204,6 +309,7 @@ function App() {
 
     if (!responseMetrics) {
       setLoading(false);
+      setLoadingStatus(null);
       return;
     }
 
@@ -220,7 +326,7 @@ function App() {
       conf_threshold: toNumber(responseConfig?.conf, 0.5)
     };
 
-    setLoading(true);
+    setLoadingStatus('analyzing');
     try {
       const response = await fetch('http://localhost:8000/api/analyze/metrics', {
         method: 'POST',
@@ -234,12 +340,20 @@ function App() {
       }
       const aiAnalysis = responseData;
       setAnalysis(aiAnalysis);
+      setLoadingStatus('complete');
+      setTimeout(() => {
+        setLoading(false);
+        setLoadingStatus(null);
+      }, 1500);
     } catch (error) {
       console.error('Analysis failed:', error);
       setAnalysis(null);
       setError(error.message || 'Analiz sırasında bir hata oluştu.');
-    } finally {
-      setLoading(false);
+      setLoadingStatus('error');
+      setTimeout(() => {
+        setLoading(false);
+        setLoadingStatus(null);
+      }, 3000);
     }
   };
 
@@ -251,7 +365,14 @@ function App() {
       </header>
 
       <main className="app-main">
-        <FileUploader onUpload={handleUpload} />
+        <FileUploader
+          onUpload={handleUpload}
+          isLoading={loading}
+          llmProvider={llmProvider}
+          setLlmProvider={setLlmProvider}
+        />
+
+        {loadingStatus && <LoadingStatus status={loadingStatus} />}
 
         {error && (
           <div className="error-banner">
@@ -266,7 +387,7 @@ function App() {
           </>
         )}
       </main>
-      
+
       <footer className="app-footer">
         <p>FKT AI Projects © 2025</p>
       </footer>
