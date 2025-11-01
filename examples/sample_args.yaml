@@ -1,0 +1,67 @@
+# YOLO11 Training Configuration - FKT Potluk Detection Project
+# Generated for testing DL_Result_Analyzer
+
+# Model Configuration
+model: yolo11l.pt
+task: detect
+
+# Training Parameters
+epochs: 100
+batch: 16
+imgsz: 640
+device: 0  # GPU 0
+
+# Optimizer Settings
+optimizer: AdamW
+lr0: 0.01           # Initial learning rate
+lrf: 0.01           # Final learning rate (lr0 * lrf)
+momentum: 0.937     # SGD momentum/Adam beta1
+weight_decay: 0.0005  # Optimizer weight decay
+warmup_epochs: 3.0  # Warmup epochs
+warmup_momentum: 0.8  # Warmup initial momentum
+warmup_bias_lr: 0.1  # Warmup initial bias lr
+
+# Data Augmentation
+hsv_h: 0.015        # HSV-Hue augmentation
+hsv_s: 0.7          # HSV-Saturation augmentation
+hsv_v: 0.4          # HSV-Value augmentation
+degrees: 15.0       # Image rotation (+/- deg)
+translate: 0.1      # Image translation (+/- fraction)
+scale: 0.5          # Image scale (+/- gain)
+shear: 0.0          # Image shear (+/- deg)
+perspective: 0.0    # Image perspective (+/- fraction)
+flipud: 0.0         # Vertical flip probability
+fliplr: 0.5         # Horizontal flip probability
+mosaic: 1.0         # Mosaic augmentation probability
+mixup: 0.0          # MixUp augmentation probability
+copy_paste: 0.0     # Copy-paste augmentation probability
+
+# Validation/Detection Settings
+iou: 0.7            # NMS IoU threshold (training-time)
+conf: 0.25          # Object confidence threshold
+val_iou: 0.5        # Validation IoU threshold for metrics
+max_det: 300        # Maximum detections per image
+
+# Dataset
+data: potluk_dataset/data.yaml
+workers: 8          # Number of dataloader workers
+cache: false        # Cache images for faster training
+rect: false         # Rectangular training
+single_cls: false   # Train as single-class dataset
+classes:            # Class indices to train on
+  - 0               # potluk
+  - 1               # temiz
+
+# Save & Logging
+project: runs/detect
+name: yolo11l_fkt_potluk
+exist_ok: false     # Overwrite existing experiment
+save: true          # Save checkpoints
+save_period: -1     # Save checkpoint every x epochs (-1 to disable)
+plots: true         # Save training plots
+verbose: true       # Verbose output
+
+# Advanced
+patience: 50        # Early stopping patience
+seed: 0             # Random seed
+deterministic: true  # Deterministic training
