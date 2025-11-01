@@ -788,6 +788,12 @@ function App() {
   const [error, setError] = useState(null);
   const [llmProvider, setLlmProvider] = useState('claude');
   const [artifacts, setArtifacts] = useState({});
+  const [activePage, setActivePage] = useState('dashboard');
+
+  const navigationItems = [
+    { id: 'dashboard', label: 'Model Özeti', icon: '📊' },
+    { id: 'threshold', label: 'Threshold Optimizer', icon: '🎛️' }
+  ];
 
   const toNumber = (value, fallback = 0) => {
     const parsed = Number(value);
@@ -886,8 +892,8 @@ function App() {
     }
   };
 
-  return (
-    <div className="app-container">
+  const renderDashboard = () => (
+    <>
       <header className="app-header">
         <h1>🎯 DL_Result_Analyzer</h1>
         <p>YOLO11 modelinizi değerlendirin, recall odaklı aksiyon planları çıkarın.</p>
@@ -918,11 +924,26 @@ function App() {
             <AIAnalysis analysis={analysis} isLoading={loading} />
           </>
         )}
+      </main>
 
+      <footer className="app-footer">
+        <p>FKT AI Projects © 2025</p>
+      </footer>
+    </>
+  );
+
+  const renderThresholdPage = () => (
+    <>
+      <header className="app-header threshold">
+        <h1>🎛️ Threshold Optimizer</h1>
+        <p>IoU ve confidence eşiklerini ayrı bir çalışma alanında optimize edin.</p>
+      </header>
+
+      <main className="app-main threshold-main">
         <ThresholdOptimizer
           initialArtifacts={{
-            best: artifacts?.client?.best || null,
-            yaml: artifacts?.client?.yaml || null
+            best: artifacts?.client?.best || artifacts?.server?.best || null,
+            yaml: artifacts?.client?.yaml || artifacts?.server?.yaml || null
           }}
         />
       </main>
@@ -930,6 +951,36 @@ function App() {
       <footer className="app-footer">
         <p>FKT AI Projects © 2025</p>
       </footer>
+    </>
+  );
+
+  return (
+    <div className="app-shell">
+      <aside className="app-sidebar">
+        <div className="sidebar-brand">
+          <span className="brand-icon">🧠</span>
+          <span className="brand-title">DL Analyzer</span>
+        </div>
+        <nav className="sidebar-nav">
+          {navigationItems.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`sidebar-nav-item ${activePage === item.id ? 'active' : ''}`}
+              onClick={() => setActivePage(item.id)}
+            >
+              <span className="nav-icon">{item.icon}</span>
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </nav>
+      </aside>
+
+      <div className="app-content">
+        <div className="app-container">
+          {activePage === 'dashboard' ? renderDashboard() : renderThresholdPage()}
+        </div>
+      </div>
     </div>
   );
 }
