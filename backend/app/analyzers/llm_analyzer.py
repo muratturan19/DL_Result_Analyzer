@@ -82,13 +82,84 @@ class LLMAnalyzer:
 
         raw_text = raw_text.strip()
 
-        try:
-            payload = json.loads(raw_text)
-        except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", raw_text, flags=re.DOTALL)
-            if not match:
-                raise ValueError("Unable to locate JSON object in LLM response.") from None
-            payload = json.loads(match.group(0))
+        # Strategy 1: Try to extract from markdown code blocks
+        code_block_match = re.search(
+            r"```(?:json)?\s*(.+?)\s*```",
+            raw_text,
+            flags=re.DOTALL
+        )
+        if code_block_match:
+            json_candidate = code_block_match.group(1).strip()
+            try:
+                payload = json.loads(json_candidate)
+                logger.debug("Successfully parsed JSON from markdown code block")
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    "Found markdown code block but JSON parsing failed: %s",
+                    str(e)
+                )
+                payload = None
+        else:
+            payload = None
+
+        # Strategy 2: Try parsing the entire response as JSON
+        if payload is None:
+            try:
+                payload = json.loads(raw_text)
+                logger.debug("Successfully parsed entire response as JSON")
+            except json.JSONDecodeError:
+                payload = None
+
+        # Strategy 3: Extract JSON by counting braces
+        if payload is None:
+            first_brace = raw_text.find('{')
+            if first_brace == -1:
+                logger.error("No JSON object found in response: %s", raw_text[:200])
+                raise ValueError("Unable to locate JSON object in LLM response.")
+
+            brace_count = 0
+            in_string = False
+            escape_next = False
+
+            for i in range(first_brace, len(raw_text)):
+                char = raw_text[i]
+
+                if escape_next:
+                    escape_next = False
+                    continue
+
+                if char == '\\':
+                    escape_next = True
+                    continue
+
+                if char == '"':
+                    in_string = not in_string
+                    continue
+
+                if not in_string:
+                    if char == '{':
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            json_candidate = raw_text[first_brace:i+1]
+                            try:
+                                payload = json.loads(json_candidate)
+                                logger.debug("Successfully extracted and parsed JSON by brace counting")
+                                break
+                            except json.JSONDecodeError as e:
+                                logger.error(
+                                    "Extracted JSON by brace counting but parsing failed: %s. JSON preview: %s",
+                                    str(e),
+                                    json_candidate[:500]
+                                )
+                                raise ValueError(
+                                    f"Found JSON-like structure but parsing failed: {e}"
+                                ) from e
+
+        if payload is None:
+            logger.error("All parsing strategies failed. Response preview: %s", raw_text[:500])
+            raise ValueError("Unable to parse JSON from LLM response after trying all strategies.")
 
         structured: Dict[str, Any] = {
             "summary": str(payload.get("summary", "")).strip(),
@@ -221,9 +292,11 @@ class LLMAnalyzer:
 
     def _analyze_with_claude(self, prompt: str) -> Dict:
         system_instruction = (
-            "You are an assistant that strictly replies with a JSON object containing "
-            'the keys "summary", "strengths", "weaknesses", "action_items", "risk_level", '
-            'and "notes". The "action_items" value must be a JSON array.'
+            "You are an assistant that strictly replies with ONLY a valid JSON object. "
+            "Do not use markdown code blocks, do not add explanatory text before or after. "
+            "Return raw JSON only, containing exactly these keys: "
+            '"summary", "strengths", "weaknesses", "action_items", "risk_level", and "notes". '
+            'The "action_items" value must be a JSON array of objects.'
         )
 
         try:
