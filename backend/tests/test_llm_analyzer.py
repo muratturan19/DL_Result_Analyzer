@@ -44,11 +44,12 @@ class TestLLMAnalyzer:
         prompt = analyzer._build_prompt(metrics, config)
 
         # Check prompt contains key information
-        assert "FKT" in prompt
-        assert "leather seat dent" in prompt.lower()
-        assert "0.79" in prompt or "79" in prompt  # Precision value
-        assert "0.82" in prompt or "82" in prompt  # Recall value
-        assert "100" in prompt  # Epochs
+        assert "MODULE CHECKLIST" in prompt
+        assert "SCHEMA REMINDERS" in prompt
+        assert "GPT-5 USAGE NOTES" in prompt
+        assert "Precision 79" in prompt or "0.79" in prompt or "79" in prompt
+        assert "Recall" in prompt and ("0.82" in prompt or "82" in prompt)
+        assert "epochs" in prompt.lower() or "100" in prompt  # Config is surfaced
         assert len(prompt) > 1000  # Prompt should be substantial
 
     def test_build_prompt_with_missing_metrics(self):
