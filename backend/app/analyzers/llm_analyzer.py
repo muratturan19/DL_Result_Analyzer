@@ -154,6 +154,9 @@ class LLMAnalyzer:
         iou_train = config.get("iou", config.get("iou_threshold", "N/A"))
         conf_train = config.get("conf", config.get("conf_threshold", "N/A"))
 
+        # Define naming convention outside f-string to avoid backslash issues
+        naming_convention = 'YYMMDD_HHMM_ModelA_###_{"GENEL"|"YAKIN"}.jpg'
+
         return dedent(
             f"""
             You are an elite YOLO troubleshooting expert helping the FKT leather seat dent
@@ -180,7 +183,7 @@ class LLMAnalyzer:
               `mosaic=1.0`). Explain the expected benefit in terms of synthetic variation.
             - Describe the dataset growth plan: target 600-800 images, capture both wide and close
               shots per seat (double-shot protocol), diversify lighting, and propose a consistent
-              naming convention such as `YYMMDD_HHMM_ModelA_###_{"GENEL"|"YAKIN"}.jpg`.
+              naming convention such as `{naming_convention}`.
             - Present action items ordered by urgency with timelines (`BUGÜN`, `YARIN`, `BU HAFTA`,
               `2-3 HAFTA`) and quantify expected improvements (e.g., recall 47% → 70-75%, F1
               51% → 65-70%).

@@ -17,6 +17,11 @@ numpy
 pillow
 matplotlib
 
+# Testing
+pytest
+pytest-cov
+httpx
+
 # Database (optional)
 # sqlalchemy
 # aiosqlite

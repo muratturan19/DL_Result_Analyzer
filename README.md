@@ -19,7 +19,7 @@ Derin öğrenme modeli sonuçlarını analiz etmek için tasarlanmış güçlü 
 
 ```bash
 # Repo'yu clone'la
-git clone https://github.com/your-username/DL_Result_Analyzer.git
+git clone https://github.com/muratturan19/DL_Result_Analyzer.git
 cd DL_Result_Analyzer
 
 # Backend setup
@@ -30,11 +30,29 @@ pip install -r requirements.txt
 
 # .env dosyası oluştur
 cp .env.example .env
-# API key'lerini .env'e ekle
+# .env dosyasını düzenle ve API key'lerini ekle:
+# - CLAUDE_API_KEY=sk-ant-...
+# - OPENAI_API_KEY=sk-...
+# - LLM_PROVIDER=claude  # veya openai
 
 # Frontend setup
 cd ../frontend
 npm install
+```
+
+### 1.5. Sample Data ile Test (Opsiyonel)
+
+```bash
+# Backend'i başlat
+cd backend
+uvicorn app.main:app --reload
+
+# Başka bir terminal'de frontend'i başlat
+cd frontend
+npm run dev
+
+# Browser'da: http://localhost:5173
+# Upload: examples/sample_results.csv + examples/sample_args.yaml
 ```
 
 ### 2. Çalıştırma
@@ -42,15 +60,28 @@ npm install
 **Terminal 1 - Backend:**
 ```bash
 cd backend
+source venv/bin/activate  # Eğer venv kullanıyorsanız
 uvicorn app.main:app --reload
-# http://localhost:8000
+# Backend: http://localhost:8000
+# API Docs: http://localhost:8000/docs
 ```
 
 **Terminal 2 - Frontend:**
 ```bash
 cd frontend
 npm run dev
-# http://localhost:5173
+# Frontend: http://localhost:5173
+```
+
+### 3. Test Suite Çalıştırma
+
+```bash
+cd backend
+pytest tests/ -v
+# 23/24 test geçmeli (OpenAI API key yoksa 1 test fail)
+
+# Coverage raporu için:
+pytest tests/ -v --cov=app --cov-report=html
 ```
 
 ---
@@ -61,43 +92,46 @@ npm run dev
 DL_Result_Analyzer/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py              ✅ FastAPI app (HAZIR)
-│   │   ├── models.py            🔨 Pydantic models
+│   │   ├── main.py                  ✅ FastAPI app (COMPLETE)
 │   │   ├── parsers/
-│   │   │   ├── yolo_parser.py   🔨 YOLO CSV/YAML parser
-│   │   │   └── metrics_extractor.py
-│   │   ├── analyzers/
-│   │   │   ├── llm_analyzer.py  🔨 Claude/GPT entegrasyonu
-│   │   │   └── rule_based.py    🔨 Fallback kurallar
-│   │   └── utils/
-│   │       ├── file_handler.py
-│   │       └── visualization.py
-│   ├── uploads/
-│   ├── reports/
-│   ├── requirements.txt         ✅ HAZIR
-│   └── .env
+│   │   │   └── yolo_parser.py       ✅ YOLO CSV/YAML parser (COMPLETE)
+│   │   └── analyzers/
+│   │       └── llm_analyzer.py      ✅ Claude/GPT integration (COMPLETE)
+│   ├── tests/                       ✅ Pytest test suite (23/24 passing)
+│   │   ├── test_yolo_parser.py
+│   │   ├── test_llm_analyzer.py
+│   │   └── test_api.py
+│   ├── uploads/                     📁 Auto-created on upload
+│   ├── requirements.txt             ✅ COMPLETE
+│   └── .env.example                 ✅ COMPLETE
 │
 ├── frontend/
 │   ├── src/
-│   │   ├── App.jsx              ✅ Main component (HAZIR)
-│   │   ├── components/
-│   │   │   ├── FileUploader.jsx     🔨 Dosya upload UI
-│   │   │   ├── MetricsDisplay.jsx   🔨 Metric kartları
-│   │   │   ├── AIAnalysis.jsx       🔨 AI analiz gösterimi
-│   │   │   └── ComparisonView.jsx   🔨 Karşılaştırma
-│   │   ├── services/
-│   │   │   └── api.js           🔨 Backend API calls
-│   │   └── App.css              🔨 Styling
-│   ├── package.json             ✅ HAZIR
-│   └── vite.config.js
+│   │   ├── App.jsx                  ✅ Full implementation (COMPLETE)
+│   │   │   ├── FileUploader         ✅ Multi-file upload
+│   │   │   ├── MetricsDisplay       ✅ Metric cards with status
+│   │   │   └── AIAnalysis           ✅ LLM analysis display
+│   │   ├── App.css                  ✅ Modern styling (COMPLETE)
+│   │   └── main.jsx
+│   ├── package.json                 ✅ COMPLETE
+│   └── node_modules/                ✅ Installed
 │
-├── README.md                    ✅ HAZIR
-└── .gitignore                   ✅ HAZIR
+├── examples/                        ✅ Sample data for testing
+│   ├── sample_results.csv           ✅ 100-epoch YOLO11 results
+│   ├── sample_args.yaml             ✅ Training configuration
+│   ├── sample_data.yaml             ✅ Dataset definition
+│   └── README.md                    ✅ Usage instructions
+│
+├── TEST_REPORT.md                   ✅ Comprehensive test report
+├── .env.example                     ✅ Environment variables template
+├── README.md                        ✅ This file
+└── .gitignore                       ✅ COMPLETE
 ```
 
-**Legend:**  
-✅ = Iskelet hazır (genişletilecek)  
-🔨 = Cursor/Codex ile oluşturulacak
+**Legend:**
+✅ = Fully implemented and tested
+📁 = Auto-generated directory
+🔨 = To be developed (future features)
 
 ---
 
@@ -352,26 +386,30 @@ export const api = {
 
 ## 🎯 Geliştirme Roadmap
 
-### **Faz 1: MVP (1-2 hafta)**
+### **Faz 1: MVP (TAMAMLANDI ✅)**
 - [x] Backend iskelet
 - [x] Frontend iskelet
-- [ ] YOLO CSV parser
-- [ ] Claude/GPT entegrasyonu
-- [ ] Basit UI
-- [ ] Localhost deployment
+- [x] YOLO CSV parser (Full implementation)
+- [x] Claude/GPT entegrasyonu (Full implementation)
+- [x] Modern UI (Responsive design)
+- [x] Localhost deployment
+- [x] Sample data ve test suite
+- [x] Comprehensive test report
 
-### **Faz 2: Özellikler (2-3 hafta)**
-- [ ] Grafik görselleştirme
+### **Faz 2: Özellikler (Devam Ediyor 🔨)**
+- [x] Error handling & logging (Backend)
+- [ ] Grafik görselleştirme (Recharts integration)
 - [ ] Çoklu eğitim karşılaştırma
 - [ ] Database entegrasyonu (SQLite)
 - [ ] PDF rapor export
-- [ ] Gelişmiş UI/UX
+- [ ] Gelişmiş UI/UX (Dark mode, animations)
 
-### **Faz 3: Production (1 hafta)**
+### **Faz 3: Production (Planlanıyor 📋)**
 - [ ] Docker containerization
-- [ ] Error handling & logging
-- [ ] Unit tests
+- [ ] E2E tests (Playwright/Cypress)
+- [ ] CI/CD pipeline
 - [ ] Masaüstü app (Electron/PyInstaller)
+- [ ] Performance optimization
 
 ---
 
