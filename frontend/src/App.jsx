@@ -352,6 +352,7 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
         err.message ||
           'Optimizasyon sırasında hata oluştu. Backend şu anda gerçek YOLO değerlendirmesi sunmuyor olabilir.'
       );
+      setError(err.message || 'Optimizasyon sırasında hata oluştu.');
     } finally {
       setIsRunning(false);
     }
