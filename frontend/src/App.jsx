@@ -869,15 +869,65 @@ const AIAnalysis = ({ analysis, isLoading }) => {
   if (!analysis) return null;
 
   const actions = Array.isArray(analysis.actions) ? analysis.actions : [];
+  const strengths = Array.isArray(analysis.strengths)
+    ? analysis.strengths
+    : analysis.strengths
+      ? [analysis.strengths]
+      : [];
+  const weaknesses = Array.isArray(analysis.weaknesses)
+    ? analysis.weaknesses
+    : analysis.weaknesses
+      ? [analysis.weaknesses]
+      : [];
   const deployProfile = analysis.deploy_profile || {};
   const calibration = analysis.calibration;
+
+  const rawRisk = analysis?.risk_level
+    || (typeof analysis?.risk === 'object' && analysis?.risk?.level)
+    || (typeof analysis?.risk === 'object' && analysis?.risk?.LEVEL)
+    || analysis?.risk;
+  const riskString = rawRisk != null ? String(rawRisk).trim() : '';
+  const riskMatch = riskString.match(/(yüksek|yuksek|orta|düşük|dusuk|high|medium|low)/i);
+  const normalizedRisk = riskMatch
+    ? riskMatch[0]
+        .toLowerCase()
+        .replace('yüksek', 'yuksek')
+        .replace('düşük', 'dusuk')
+    : '';
+  const riskDisplay = riskMatch ? riskMatch[0].toUpperCase() : (riskString ? riskString.toUpperCase() : '');
+  const riskClassName = normalizedRisk ? `risk-${normalizedRisk}` : '';
+
+  const summaryHighlights = useMemo(() => {
+    const summarySource = Array.isArray(analysis?.summary)
+      ? analysis.summary.join(' ')
+      : analysis?.summary;
+    if (!summarySource) return [];
+    return summarySource
+      .split(/\n+/)
+      .flatMap((line) => line.split(/(?<=[.!?])\s+(?=[A-ZİĞÖŞÜ0-9])/u))
+      .map((item) => item.replace(/^[-•\d\)\(]+\s*/u, '').trim())
+      .filter(Boolean);
+  }, [analysis?.summary]);
+
+  const notesHighlights = useMemo(() => {
+    const notesSource = Array.isArray(analysis?.notes)
+      ? analysis.notes.join('\n')
+      : analysis?.notes;
+    if (!notesSource || typeof notesSource !== 'string') return [];
+    return notesSource
+      .split(/\n+/)
+      .map((item) => item.replace(/^[-•]+\s*/u, '').trim())
+      .filter(Boolean);
+  }, [analysis?.notes]);
 
   const renderAction = (action, idx) => {
     if (!action || typeof action !== 'object') {
       return (
-        <div key={idx} className="action-item">
-          <span className="action-number">{idx + 1}</span>
-          <div className="action-text">{String(action ?? 'Belirtilmedi')}</div>
+        <div key={idx} className="action-card">
+          <div className="action-card-header">
+            <span className="action-index">{idx + 1}</span>
+            <div className="action-card-title">{String(action ?? 'Belirtilmedi')}</div>
+          </div>
         </div>
       );
     }
@@ -891,34 +941,44 @@ const AIAnalysis = ({ analysis, isLoading }) => {
       validation_plan,
     } = action;
 
+    const formatValue = (value) => {
+      if (value == null) return '';
+      if (typeof value === 'string') return value;
+      if (Array.isArray(value)) return value.map((item) => String(item)).join('\n• ');
+      if (typeof value === 'object') return JSON.stringify(value);
+      return String(value);
+    };
+
+    const fields = [
+      { label: 'Problem', value: formatValue(problem) },
+      { label: 'Kanıt', value: formatValue(evidence) },
+      { label: 'Öneri', value: formatValue(recommendation) },
+      { label: 'Beklenen Kazanç', value: formatValue(expected_gain) },
+      { label: 'Doğrulama Planı', value: formatValue(validation_plan) },
+    ].filter(({ value }) => value);
+
     return (
-      <div key={idx} className="action-item">
-        <span className="action-number">{idx + 1}</span>
-        <div className="action-text">
-          <div className="action-row">
-            <span className="action-label">Modül:</span>
-            <span>{module || 'Belirtilmedi'}</span>
+      <div key={idx} className="action-card">
+        <div className="action-card-header">
+          <span className="action-index">{idx + 1}</span>
+          <div>
+            <div className="action-card-subtitle">Modül</div>
+            <div className="action-card-title">{module || 'Belirtilmedi'}</div>
           </div>
-          <div className="action-row">
-            <span className="action-label">Problem:</span>
-            <span>{problem || 'Belirtilmedi'}</span>
-          </div>
-          <div className="action-row">
-            <span className="action-label">Kanıt:</span>
-            <span>{evidence || 'Belirtilmedi'}</span>
-          </div>
-          <div className="action-row">
-            <span className="action-label">Öneri:</span>
-            <span>{recommendation || 'Belirtilmedi'}</span>
-          </div>
-          <div className="action-row">
-            <span className="action-label">Beklenen Kazanç:</span>
-            <span>{expected_gain || 'Belirtilmedi'}</span>
-          </div>
-          <div className="action-row">
-            <span className="action-label">Doğrulama Planı:</span>
-            <span>{validation_plan || 'Belirtilmedi'}</span>
-          </div>
+        </div>
+        <div className="action-card-body">
+          {fields.length > 0 ? (
+            <dl className="action-fields">
+              {fields.map(({ label, value }) => (
+                <div key={label} className="action-field">
+                  <dt>{label}</dt>
+                  <dd>{value}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : (
+            <p className="action-empty">Ek detay bulunamadı.</p>
+          )}
         </div>
       </div>
     );
@@ -940,27 +1000,44 @@ const AIAnalysis = ({ analysis, isLoading }) => {
     if (value === null || value === undefined) return null;
     const displayLabel = labelMap[key] || key.replace(/_/g, ' ');
     return (
-      <li key={key}>
-        <span className="deploy-label">{displayLabel}:</span>
-        <span className="deploy-value">{typeof value === 'string' ? value : JSON.stringify(value)}</span>
-      </li>
+      <div key={key} className="deploy-card">
+        <div className="deploy-label">{displayLabel}</div>
+        <div className="deploy-value">{typeof value === 'string' ? value : JSON.stringify(value)}</div>
+      </div>
     );
   };
 
   return (
     <div className="analysis-panel">
-      <h2>🤖 AI Analiz Sonuçları</h2>
+      <div className="analysis-panel-header">
+        <h2>🤖 AI Analiz Sonuçları</h2>
+        {riskString && (
+          <span className={`risk-chip ${riskClassName}`}>
+            Risk: {riskDisplay || 'BİLİNMİYOR'}
+          </span>
+        )}
+      </div>
 
       <div className="analysis-section">
         <h3>📊 Özet</h3>
-        <p>{analysis.summary}</p>
+        {summaryHighlights.length > 1 ? (
+          <div className="summary-grid">
+            {summaryHighlights.map((item, idx) => (
+              <div key={idx} className="summary-card">
+                <span>{item}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p>{analysis.summary}</p>
+        )}
       </div>
 
       <div className="analysis-columns">
         <div className="analysis-section strengths">
           <h3>✅ Güçlü Yönler</h3>
           <ul>
-            {analysis.strengths?.map((item, idx) => (
+            {strengths.map((item, idx) => (
               <li key={idx}>{item}</li>
             ))}
           </ul>
@@ -969,7 +1046,7 @@ const AIAnalysis = ({ analysis, isLoading }) => {
         <div className="analysis-section weaknesses">
           <h3>⚠️ Zayıf Yönler</h3>
           <ul>
-            {analysis.weaknesses?.map((item, idx) => (
+            {weaknesses.map((item, idx) => (
               <li key={idx}>{item}</li>
             ))}
           </ul>
@@ -987,23 +1064,26 @@ const AIAnalysis = ({ analysis, isLoading }) => {
         </div>
       </div>
 
-      <div className={`risk-badge risk-${analysis.risk}`}>
-        Risk Seviyesi: {analysis.risk?.toUpperCase?.()}
-      </div>
-
-      {analysis.notes && (
-        <div className="analysis-section">
-          <h3>📝 Notlar</h3>
-          <p>{analysis.notes}</p>
+      {notesHighlights.length > 0 && (
+        <div className="analysis-note-callout">
+          <span className="note-icon">📝</span>
+          <div className="note-content">
+            <h4>Notlar</h4>
+            <ul>
+              {notesHighlights.map((item, idx) => (
+                <li key={idx}>{item}</li>
+              ))}
+            </ul>
+          </div>
         </div>
       )}
 
       {deployProfileEntries.length > 0 && (
         <div className="analysis-section">
           <h3>🚀 Yayın Profili</h3>
-          <ul className="deploy-profile-list">
+          <div className="deploy-grid">
             {deployProfileEntries.map(([key, value]) => renderDeployValue(key, value))}
-          </ul>
+          </div>
         </div>
       )}
 
