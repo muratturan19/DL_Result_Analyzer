@@ -15,6 +15,9 @@ const FileUploader = ({ onUpload, isLoading, llmProvider, setLlmProvider }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
+    // Immediately notify parent that upload has started
+    onUpload({ _loading: true });
+
     const formData = new FormData();
     if (files.csv) formData.append('results_csv', files.csv);
     if (files.yaml) formData.append('config_yaml', files.yaml);
@@ -273,6 +276,13 @@ function App() {
     if (!uploadResponse) {
       setLoading(false);
       setLoadingStatus(null);
+      return;
+    }
+
+    // Handle loading start signal
+    if (uploadResponse._loading) {
+      setLoading(true);
+      setLoadingStatus('uploading');
       return;
     }
 
