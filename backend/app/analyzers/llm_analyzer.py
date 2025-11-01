@@ -7,11 +7,12 @@ import json
 import logging
 import os
 import re
-from textwrap import dedent
 from typing import Any, Dict, List, Literal
 
 from anthropic import Anthropic
 from openai import OpenAI
+
+from app.prompts.analysis_prompt import DL_ANALYSIS_PROMPT
 
 try:  # Anthropics specific error classes are optional in the runtime.
     from anthropic import APIConnectionError as AnthropicConnectionError
@@ -43,12 +44,37 @@ class LLMAnalyzer:
             )
             self.client = Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
         else:
-            api_key_present = bool(os.getenv("OPENAI_API_KEY"))
+            api_key = os.getenv("OPENAI_API_KEY")
+            api_key_present = bool(api_key)
             logger.info(
                 "OpenAI istemcisi oluşturuluyor (api_key_var=%s)",
                 api_key_present,
             )
-            self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            if api_key_present:
+                self.client = OpenAI(api_key=api_key)
+            else:
+                logger.warning("OPENAI_API_KEY bulunamadı, stub istemci kullanılacak.")
+
+                def _raise_missing_key(*_args: Any, **_kwargs: Any) -> Any:  # pragma: no cover - stub
+                    raise RuntimeError("OpenAI API key is not configured.")
+
+                completions_stub = type(
+                    "CompletionsStub",
+                    (),
+                    {"create": staticmethod(_raise_missing_key)},
+                )()
+
+                chat_stub = type(
+                    "ChatStub",
+                    (),
+                    {"completions": completions_stub},
+                )()
+
+                self.client = type(
+                    "OpenAIStub",
+                    (),
+                    {"chat": chat_stub},
+                )()
 
     @staticmethod
     def _try_fix_truncated_json(json_str: str) -> Dict[str, Any] | None:
@@ -314,6 +340,20 @@ class LLMAnalyzer:
             return self._analyze_with_claude(prompt)
         return self._analyze_with_gpt(prompt)
 
+    @staticmethod
+    def _format_percentage(value: Any) -> str:
+        """Convert ratio or percentage like values into a percentage string."""
+
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return str(value)
+
+        if numeric <= 1:
+            numeric *= 100
+
+        return f"{numeric:.2f}"
+
     def _build_prompt(self, metrics: Dict, config: Dict) -> str:
         """Compose a domain informed prompt for the LLM.
 
@@ -322,82 +362,19 @@ class LLMAnalyzer:
         advice.  Every requirement from the incident review is folded into the
         instructions below.
         """
+        metrics_json = json.dumps(metrics or {}, indent=2, ensure_ascii=False)
+        config_json = json.dumps(config or {}, indent=2, ensure_ascii=False)
 
-        precision = metrics.get("precision", "N/A")
-        recall = metrics.get("recall", "N/A")
-        map50 = metrics.get("map50", "N/A")
-        map50_95 = metrics.get("map50_95", "N/A")
-        loss = metrics.get("loss", "N/A")
+        recall_percent = self._format_percentage(metrics.get("recall")) if metrics else "N/A"
+        precision_percent = (
+            self._format_percentage(metrics.get("precision")) if metrics else "N/A"
+        )
 
-        epochs = config.get("epochs", config.get("epoch", "N/A"))
-        batch = config.get("batch", config.get("batch_size", "N/A"))
-        lr0 = config.get("lr0", config.get("learning_rate", "N/A"))
-        iou_train = config.get("iou", config.get("iou_threshold", "N/A"))
-        conf_train = config.get("conf", config.get("conf_threshold", "N/A"))
-
-        # Define naming convention outside f-string to avoid backslash issues
-        naming_convention = 'YYMMDD_HHMM_ModelA_###_{"GENEL"|"YAKIN"}.jpg'
-
-        return dedent(
-            f"""
-            You are an elite YOLO troubleshooting expert helping the FKT leather seat dent
-            detection project. Use the case study knowledge below to craft a thorough, structured
-            analysis. Always ground your reasoning in the provided metrics and config and offer
-            precise, reproducible remediation steps.
-
-            ### Case Study Knowledge to Reference
-            - Low recall with healthy precision usually signals that detections exist but are
-              rejected by the evaluation IoU threshold. Explain why relaxing validation IoU
-              (e.g., testing 0.3/0.4/0.5/0.6) can recover recall and how to run the sweep:
-              ```python
-              for iou in [0.3, 0.4, 0.5, 0.6]:
-                  metrics = model.val(data="data.yaml", iou=iou, conf=0.5)
-                  print(f"IoU={{iou}} → Recall={{metrics.recall:.3f}}").
-              ```
-              Clarify that Non-Maximum Suppression (training-time IoU/conf) is separate from
-              validation IoU thresholds used for metrics, and specify when to tune each.
-            - Provide an annotation quality checklist: inspect ~50 samples, verify polygon
-              consistency, ensure no missing dents, and confirm that Roboflow augmentations are
-              disabled because they distort labels.
-            - Recommend code-based augmentations with explicit parameters (e.g., `degrees=15`,
-              `translate=0.1`, `fliplr=0.5`, `hsv_h=0.015`, `hsv_s=0.7`, `hsv_v=0.4`,
-              `mosaic=1.0`). Explain the expected benefit in terms of synthetic variation.
-            - Describe the dataset growth plan: target 600-800 images, capture both wide and close
-              shots per seat (double-shot protocol), diversify lighting, and propose a consistent
-              naming convention such as `{naming_convention}`.
-            - Present action items ordered by urgency with timelines (`BUGÜN`, `YARIN`, `BU HAFTA`,
-              `2-3 HAFTA`) and quantify expected improvements (e.g., recall 47% → 70-75%, F1
-              51% → 65-70%).
-
-            ### Metrics
-            - Precision: {precision}
-            - Recall: {recall}
-            - mAP@0.5: {map50}
-            - mAP@0.5:0.95: {map50_95}
-            - Loss: {loss}
-
-            ### Training Config
-            - Epochs: {epochs}
-            - Batch Size: {batch}
-            - Learning Rate: {lr0}
-            - Training IoU (NMS): {iou_train}
-            - Training Confidence (NMS): {conf_train}
-
-            ### Response Format (strict)
-            1. **ÖZET** – 2-3 sentences covering overall health and the key blocker.
-            2. **GÜÇLÜ YÖNLER** – bullet list.
-            3. **ZAYIF YÖNLER** – bullet list with root causes (mention IoU vs confidence when relevant).
-            4. **AKSİYON ÖNERİLERİ** – numbered list sorted by urgency. Each item must include:
-               - urgency tag (BUGÜN / YARIN / BU HAFTA / 2-3 HAFTA),
-               - concrete instructions (commands, parameter values, inspection counts),
-               - expected metric impact when possible.
-            5. **RİSK SEVİYESİ** – one of `low`, `medium`, `high` with justification.
-            6. **NOTLAR** – clarify the difference between confidence and IoU thresholds and how to
-               set production vs validation values after improvements.
-
-            Do not suggest collecting vague "more data" without counts, and never recommend
-            Roboflow-side augmentations. Base every recommendation on the evidence above.
-            """
+        return DL_ANALYSIS_PROMPT.format(
+            metrics=metrics_json,
+            config=config_json,
+            recall=recall_percent,
+            precision=precision_percent,
         ).strip()
 
     def _analyze_with_claude(self, prompt: str) -> Dict:
