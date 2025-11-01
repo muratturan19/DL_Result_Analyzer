@@ -324,6 +324,7 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
     }
 
     setError(null);
+    setResult(null);
     setIsRunning(true);
 
     const formData = new FormData();
@@ -346,6 +347,11 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
       setResult(payload);
     } catch (err) {
       console.error('Threshold optimization failed:', err);
+      setResult(null);
+      setError(
+        err.message ||
+          'Optimizasyon sırasında hata oluştu. Backend şu anda gerçek YOLO değerlendirmesi sunmuyor olabilir.'
+      );
       setError(err.message || 'Optimizasyon sırasında hata oluştu.');
     } finally {
       setIsRunning(false);

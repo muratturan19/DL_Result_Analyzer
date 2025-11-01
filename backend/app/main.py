@@ -204,6 +204,26 @@ async def upload_results(
     except Exception as exc:  # pragma: no cover - unexpected failures
         logger.exception("Beklenmeyen bir hata oluştu")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+@app.post("/api/optimize/thresholds")
+async def optimize_thresholds(
+    best_model: UploadFile = File(...),
+    data_yaml: UploadFile = File(...),
+    iou_range: str = Form(...),
+    conf_range: str = Form(...),
+):
+    """Temporarily disabled until real YOLO evaluation is implemented."""
+
+    logger.warning(
+        "Threshold optimizer endpoint was called but the feature is disabled until real YOLO"
+        " evaluation is implemented."
+    )
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "Threshold optimizasyonu backend'de henüz gerçek YOLO değerlendirmesiyle"
+            " entegre edilmedi. Güvenilir sonuçlar için bu özellik devre dışıdır."
+        ),
+    )
 
 
 def _parse_range_payload(payload: str, name: str) -> Dict[str, float]:
