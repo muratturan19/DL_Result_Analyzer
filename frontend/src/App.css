@@ -551,6 +551,90 @@ body {
   color: #4338ca;
 }
 
+.action-structured {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.action-structured-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.action-structured-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #3730a3;
+}
+
+.action-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.action-step {
+  background: rgba(79, 70, 229, 0.08);
+  border: 1px solid rgba(79, 70, 229, 0.18);
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.action-step-text {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.action-step-bullets {
+  margin: 0;
+  padding-left: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.action-step-structured {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.action-step-title {
+  font-weight: 600;
+  color: #312e81;
+}
+
+.action-step-details {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.action-step-details li {
+  display: flex;
+  gap: 0.4rem;
+  line-height: 1.45;
+}
+
+.action-step-detail-label {
+  font-weight: 600;
+  color: #4338ca;
+}
+
+.action-step-detail-value {
+  color: var(--text-primary);
+}
+
 /* Loading Status */
 .loading-status {
   background: white;
