@@ -51,6 +51,114 @@ class LLMAnalyzer:
             self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     @staticmethod
+    def _try_fix_truncated_json(json_str: str) -> Dict[str, Any] | None:
+        """Attempt to fix common JSON truncation issues.
+
+        This handles cases where the response was cut off mid-string or mid-object.
+        Returns the parsed dict if successful, None otherwise.
+        """
+        if not json_str or not json_str.strip():
+            return None
+
+        json_str = json_str.strip()
+
+        # Check if it starts with { and doesn't end with }
+        if not json_str.startswith('{'):
+            return None
+
+        # Try to find where the JSON got cut off
+        try:
+            # Count braces to see if we need to close
+            open_braces = json_str.count('{')
+            close_braces = json_str.count('}')
+
+            if open_braces > close_braces:
+                # Check if we're in the middle of a string (unterminated string)
+                # Count quotes but be careful about escaped quotes
+                quote_count = 0
+                escaped = False
+                for char in json_str:
+                    if escaped:
+                        escaped = False
+                        continue
+                    if char == '\\':
+                        escaped = True
+                        continue
+                    if char == '"':
+                        quote_count += 1
+
+                # If odd number of quotes, we have an unterminated string
+                fixed = json_str
+                if quote_count % 2 == 1:
+                    # Close the string
+                    fixed += '"'
+                    logger.debug("Added missing closing quote")
+
+                # Close any open arrays
+                open_brackets = fixed.count('[')
+                close_brackets = fixed.count(']')
+                if open_brackets > close_brackets:
+                    fixed += ']' * (open_brackets - close_brackets)
+                    logger.debug("Added %d missing closing bracket(s)", open_brackets - close_brackets)
+
+                # Close any open objects
+                open_braces = fixed.count('{')
+                close_braces = fixed.count('}')
+                if open_braces > close_braces:
+                    fixed += '}' * (open_braces - close_braces)
+                    logger.debug("Added %d missing closing brace(s)", open_braces - close_braces)
+
+                # Try to parse
+                try:
+                    return json.loads(fixed)
+                except json.JSONDecodeError:
+                    # If still failing, try removing incomplete last item
+                    # Find the last complete field and truncate there
+                    logger.debug("Still failed after fixing braces/brackets, trying to remove incomplete field")
+
+                    # Look for common patterns like: "field": "incomplete value
+                    # We'll try to find the last comma before the incomplete part
+                    last_good_comma = -1
+                    depth = 0
+                    in_string = False
+                    escaped = False
+
+                    for i, char in enumerate(fixed):
+                        if escaped:
+                            escaped = False
+                            continue
+                        if char == '\\':
+                            escaped = True
+                            continue
+                        if char == '"':
+                            in_string = not in_string
+                            continue
+                        if not in_string:
+                            if char in '{[':
+                                depth += 1
+                            elif char in '}]':
+                                depth -= 1
+                            elif char == ',' and depth == 1:
+                                last_good_comma = i
+
+                    if last_good_comma > 0:
+                        # Truncate after last good comma and close
+                        truncated = fixed[:last_good_comma]
+                        open_braces = truncated.count('{')
+                        close_braces = truncated.count('}')
+                        truncated += '}' * (open_braces - close_braces)
+
+                        try:
+                            return json.loads(truncated)
+                        except json.JSONDecodeError:
+                            pass
+
+        except Exception as e:
+            logger.debug("Error while trying to fix truncated JSON: %s", str(e))
+
+        return None
+
+    @staticmethod
     def _normalise_list(value: Any) -> List[str]:
         """Ensure list-like fields are always returned as a list of strings."""
 
@@ -82,7 +190,7 @@ class LLMAnalyzer:
 
         raw_text = raw_text.strip()
 
-        # Strategy 1: Try to extract from markdown code blocks
+        # Strategy 1: Try to extract from markdown code blocks (even though we asked not to use them)
         code_block_match = re.search(
             r"```(?:json)?\s*(.+?)\s*```",
             raw_text,
@@ -98,7 +206,8 @@ class LLMAnalyzer:
                     "Found markdown code block but JSON parsing failed: %s",
                     str(e)
                 )
-                payload = None
+                # Try to fix truncated JSON
+                payload = LLMAnalyzer._try_fix_truncated_json(json_candidate)
         else:
             payload = None
 
@@ -107,7 +216,8 @@ class LLMAnalyzer:
             try:
                 payload = json.loads(raw_text)
                 logger.debug("Successfully parsed entire response as JSON")
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                logger.debug("Failed to parse entire response as JSON: %s", str(e))
                 payload = None
 
         # Strategy 3: Extract JSON by counting braces
@@ -148,14 +258,14 @@ class LLMAnalyzer:
                                 logger.debug("Successfully extracted and parsed JSON by brace counting")
                                 break
                             except json.JSONDecodeError as e:
-                                logger.error(
-                                    "Extracted JSON by brace counting but parsing failed: %s. JSON preview: %s",
-                                    str(e),
-                                    json_candidate[:500]
+                                logger.warning(
+                                    "Extracted JSON by brace counting but parsing failed: %s. Trying to fix...",
+                                    str(e)
                                 )
-                                raise ValueError(
-                                    f"Found JSON-like structure but parsing failed: {e}"
-                                ) from e
+                                payload = LLMAnalyzer._try_fix_truncated_json(json_candidate)
+                                if payload:
+                                    logger.info("Successfully fixed truncated JSON")
+                                    break
 
         if payload is None:
             logger.error("All parsing strategies failed. Response preview: %s", raw_text[:500])
@@ -293,16 +403,18 @@ class LLMAnalyzer:
     def _analyze_with_claude(self, prompt: str) -> Dict:
         system_instruction = (
             "You are an assistant that strictly replies with ONLY a valid JSON object. "
-            "Do not use markdown code blocks, do not add explanatory text before or after. "
-            "Return raw JSON only, containing exactly these keys: "
+            "CRITICAL: Return PURE JSON ONLY - NO markdown, NO code blocks, NO ```json, NO explanatory text. "
+            "Start your response with { and end with }. "
+            "The JSON must contain exactly these keys: "
             '"summary", "strengths", "weaknesses", "action_items", "risk_level", and "notes". '
-            'The "action_items" value must be a JSON array of objects.'
+            'The "action_items" value must be a JSON array of objects. '
+            "Ensure all strings are properly escaped, especially quotes and newlines."
         )
 
         try:
             response = self.client.messages.create(
                 model="claude-sonnet-4-5-20250929",
-                max_tokens=2048,
+                max_tokens=4096,  # Increased for longer Turkish responses
                 temperature=0,
                 system=system_instruction,
                 messages=[
