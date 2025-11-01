@@ -385,7 +385,9 @@ class LLMAnalyzer:
             "The JSON must contain exactly these keys: "
             '"summary", "strengths", "weaknesses", "action_items", "risk_level", and "notes". '
             'The "action_items" value must be a JSON array of objects. '
-            "Ensure all strings are properly escaped, especially quotes and newlines."
+            "Ensure all strings are properly escaped, especially quotes and newlines. "
+            "All textual content must be written entirely in fluent Turkish; avoid English wording "
+            "except for metric names or hyperparameters."
         )
 
         try:
@@ -425,7 +427,9 @@ class LLMAnalyzer:
             "You are an assistant that returns thorough analyses as JSON. "
             'Respond with an object containing "summary", "strengths", "weaknesses", '
             '"action_items", "risk_level", and "notes". Ensure "action_items" is an array of '
-            "objects with actionable guidance."
+            "objects with actionable guidance. "
+            "All textual content must be produced entirely in natural Turkish; avoid English "
+            "sentences except for metric names or hyperparameters."
         )
 
         try:
