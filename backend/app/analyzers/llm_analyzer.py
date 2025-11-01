@@ -206,6 +206,19 @@ class LLMAnalyzer:
         return self._openai_response_format_supported
 
     @staticmethod
+    def _openai_supports_temperature(model_name: str) -> bool:
+        """Return True when the given OpenAI model supports temperature."""
+
+        unsupported_prefixes = ("gpt-5",)
+        if any(model_name.startswith(prefix) for prefix in unsupported_prefixes):
+            logger.debug(
+                "OpenAI modeli %s temperature parametresini desteklemiyor; parametre atlanacak.",
+                model_name,
+            )
+            return False
+        return True
+
+    @staticmethod
     def _try_fix_truncated_json(json_str: str) -> Dict[str, Any] | None:
         """Attempt to fix common JSON truncation issues.
 
@@ -641,7 +654,6 @@ class LLMAnalyzer:
         try:
             request_kwargs: Dict[str, Any] = {
                 "model": model_name,
-                "temperature": 0,
                 "reasoning": {"effort": reasoning_effort},
                 "input": [
                     {
@@ -658,6 +670,9 @@ class LLMAnalyzer:
                     },
                 ],
             }
+
+            if self._openai_supports_temperature(model_name):
+                request_kwargs["temperature"] = 0
 
             if self._openai_supports_response_format():
                 request_kwargs["response_format"] = {
