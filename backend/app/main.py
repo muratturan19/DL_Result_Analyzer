@@ -247,6 +247,26 @@ async def upload_results(
         if training_code_context:
             enriched_config["training_code"] = training_code_context
 
+        artefacts_info: Dict[str, Dict[str, object]] = {
+            "results_csv": {"filename": csv_filename, "available": True},
+            "args_yaml": {
+                "filename": yaml_path.name if yaml_path else None,
+                "available": yaml_path is not None,
+            },
+            "graphs": {
+                "filenames": saved_graphs,
+                "available": bool(saved_graphs),
+            },
+            "best_model": {
+                "filename": best_model_path.name if best_model_path else None,
+                "available": best_model_path is not None,
+            },
+            "training_code": {
+                "filename": training_code_filename,
+                "available": bool(training_code_filename),
+            },
+        }
+
         analysis = {}
         try:
             # Frontend'ten gelen provider'ı kullan, fallback olarak env'den oku
@@ -263,6 +283,8 @@ async def upload_results(
                 enriched_config,
                 project_context=project_context,
                 training_code=training_code_context,
+                history=history,
+                artefacts=artefacts_info,
             )
             logger.info("LLM analizi tamamlandı: provider=%s", provider)
         except Exception as exc:
@@ -293,6 +315,7 @@ async def upload_results(
                 "best_model": best_model_path.name if best_model_path else None,
                 "training_code": training_code_path.name if training_code_path else None,
             },
+            "artefacts": artefacts_info,
         }
     except (FileNotFoundError, ValueError) as exc:
         logger.exception("Dosya veya veri hatası nedeniyle upload başarısız oldu")

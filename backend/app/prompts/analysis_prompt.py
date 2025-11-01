@@ -40,11 +40,17 @@ Ham metrikler:
 EĞİTİM KONFİGÜRASYONU:
 {config}
 
+EĞİTİM EPOCH TARİHÇESİ (results.csv'den alınan eğriler):
+{history}
+
 PROJE BAĞLAMI:
 {project_context}
 
 EĞİTİM KODU ÖZETİ:
 {training_code}
+
+PAYLAŞILAN ARTEFAKTLAR:
+{artefacts}
 
 ANALİZ TALİMATLARI:
 1. FKT deri koltuk potluk tespiti görevini özetle; hedefler Recall≥85%, Precision≥75%, F1≥80%.
