@@ -24,6 +24,8 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+MAX_TRAINING_CODE_CHARS = int(os.getenv("TRAINING_CODE_PREVIEW_CHARS", "4000"))
+
 app = FastAPI(title="DL_Result_Analyzer", version="1.0.0")
 
 # CORS - React frontend için
@@ -74,6 +76,12 @@ async def upload_results(
     config_yaml: Optional[UploadFile] = File(None),
     graphs: Optional[List[UploadFile]] = File(None),
     best_model: Optional[UploadFile] = File(None),
+    training_code: Optional[UploadFile] = File(None),
+    project_name: Optional[str] = Form(None),
+    short_description: Optional[str] = Form(None),
+    class_count: Optional[str] = Form(None),
+    training_method: Optional[str] = Form(None),
+    project_focus: Optional[str] = Form(None),
     llm_provider: str = Form("claude"),
 ):
     """
@@ -89,12 +97,31 @@ async def upload_results(
     csv_path = uploads_dir / csv_filename
 
     logger.info(
-        "Upload request received: csv=%s yaml=%s graphs=%s best_model=%s",
+        "Upload request received: csv=%s yaml=%s graphs=%s best_model=%s training_code=%s",
         csv_filename,
         config_yaml.filename if config_yaml else None,
         len(graphs or []),
         best_model.filename if best_model else None,
+        training_code.filename if training_code else None,
     )
+
+    def _clean_str(value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+    cleaned_project_name = _clean_str(project_name)
+    cleaned_description = _clean_str(short_description)
+    cleaned_method = _clean_str(training_method)
+    cleaned_focus = _clean_str(project_focus)
+
+    cleaned_class_count: Optional[int] = None
+    if class_count is not None:
+        try:
+            cleaned_class_count = int(class_count)
+        except (TypeError, ValueError):
+            logger.warning("Geçersiz class_count değeri alındı: %s", class_count)
 
     try:
         csv_bytes = await results_csv.read()
@@ -146,6 +173,28 @@ async def upload_results(
             logger.exception("best.pt kaydedilemedi: %s", best_model_filename)
             raise HTTPException(status_code=500, detail=f"best.pt kaydedilemedi: {exc}") from exc
 
+    training_code_path: Optional[Path] = None
+    training_code_excerpt: Optional[str] = None
+    training_code_filename: Optional[str] = None
+    if training_code:
+        training_dir = uploads_dir / "training"
+        training_dir.mkdir(parents=True, exist_ok=True)
+        training_code_filename = Path(training_code.filename or "training_code.py").name
+        training_code_path = training_dir / training_code_filename
+        try:
+            code_bytes = await training_code.read()
+            training_code_path.write_bytes(code_bytes)
+            decoded_code = code_bytes.decode("utf-8", errors="replace")
+            training_code_excerpt = decoded_code[:MAX_TRAINING_CODE_CHARS]
+            logger.info(
+                "Eğitim kodu kaydedildi: %s (önizleme=%s karakter)",
+                training_code_path,
+                len(training_code_excerpt or ""),
+            )
+        except Exception as exc:
+            logger.exception("Eğitim kodu kaydedilemedi: %s", training_code_filename)
+            raise HTTPException(status_code=500, detail=f"Training code kaydedilemedi: {exc}") from exc
+
     try:
         from app.parsers.yolo_parser import YOLOResultParser
         from app.analyzers.llm_analyzer import LLMAnalyzer
@@ -161,6 +210,28 @@ async def upload_results(
             sorted(config.keys()),
         )
 
+        project_context = {
+            "project_name": cleaned_project_name,
+            "short_description": cleaned_description,
+            "class_count": cleaned_class_count,
+            "training_method": cleaned_method,
+            "project_focus": cleaned_focus,
+        }
+        project_context = {k: v for k, v in project_context.items() if v not in (None, "")}
+
+        training_code_context: Optional[Dict[str, str]] = None
+        if training_code_filename:
+            training_code_context = {
+                "filename": training_code_filename,
+                "excerpt": training_code_excerpt or "",
+            }
+
+        enriched_config: Dict[str, object] = dict(config)
+        if project_context:
+            enriched_config["project_context"] = project_context
+        if training_code_context:
+            enriched_config["training_code"] = training_code_context
+
         analysis = {}
         try:
             # Frontend'ten gelen provider'ı kullan, fallback olarak env'den oku
@@ -172,7 +243,12 @@ async def upload_results(
 
             analyzer = LLMAnalyzer(provider=provider)  # type: ignore[arg-type]
             logger.info("LLM analizi başlatılıyor: provider=%s", provider)
-            analysis = analyzer.analyze(metrics, config)
+            analysis = analyzer.analyze(
+                metrics,
+                enriched_config,
+                project_context=project_context,
+                training_code=training_code_context,
+            )
             logger.info("LLM analizi tamamlandı: provider=%s", provider)
         except Exception as exc:
             logger.exception("LLM analizi başarısız oldu")
@@ -188,14 +264,17 @@ async def upload_results(
         return {
             "status": "success",
             "metrics": metrics,
-            "config": config,
+            "config": enriched_config,
             "history": history,
             "analysis": analysis,
+            "project": project_context,
+            "training_code": training_code_context,
             "files": {
                 "csv": csv_filename,
                 "yaml": yaml_path.name if yaml_path else None,
                 "graphs": saved_graphs,
                 "best_model": best_model_path.name if best_model_path else None,
+                "training_code": training_code_path.name if training_code_path else None,
             },
         }
     except (FileNotFoundError, ValueError) as exc:

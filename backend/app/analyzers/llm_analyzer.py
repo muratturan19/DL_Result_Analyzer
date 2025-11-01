@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import re
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, List, Literal, Optional
 
 from anthropic import Anthropic
 from openai import OpenAI
@@ -326,10 +326,16 @@ class LLMAnalyzer:
 
         return structured
 
-    def analyze(self, metrics: Dict, config: Dict) -> Dict:
+    def analyze(
+        self,
+        metrics: Dict,
+        config: Dict,
+        project_context: Optional[Dict] = None,
+        training_code: Optional[Dict[str, str]] = None,
+    ) -> Dict:
         """Create the analysis prompt and dispatch it to the chosen provider."""
 
-        prompt = self._build_prompt(metrics or {}, config or {})
+        prompt = self._build_prompt(metrics or {}, config or {}, project_context or {}, training_code or {})
         logger.debug(
             "LLM prompt hazırlandı (provider=%s, uzunluk=%s karakter)",
             self.provider,
@@ -354,7 +360,13 @@ class LLMAnalyzer:
 
         return f"{numeric:.2f}"
 
-    def _build_prompt(self, metrics: Dict, config: Dict) -> str:
+    def _build_prompt(
+        self,
+        metrics: Dict,
+        config: Dict,
+        project_context: Optional[Dict] = None,
+        training_code: Optional[Dict[str, str]] = None,
+    ) -> str:
         """Compose a domain informed prompt for the LLM.
 
         The prompt encodes the FKT leather seat dent detection case study so that
@@ -370,11 +382,41 @@ class LLMAnalyzer:
             self._format_percentage(metrics.get("precision")) if metrics else "N/A"
         )
 
+        map50_percent = self._format_percentage(metrics.get("map50")) if metrics else "N/A"
+
+        f1_score: Optional[float] = None
+        try:
+            precision_value = float(metrics.get("precision", 0))
+            recall_value = float(metrics.get("recall", 0))
+            if precision_value + recall_value > 0:
+                f1_score = (2 * precision_value * recall_value) / (precision_value + recall_value)
+        except (TypeError, ValueError, ZeroDivisionError):
+            f1_score = None
+
+        f1_percent = self._format_percentage(f1_score) if f1_score is not None else "N/A"
+
+        project_json = json.dumps(project_context or {}, indent=2, ensure_ascii=False) if project_context else "Belirtilmedi"
+
+        training_code_filename = training_code.get("filename") if training_code else None
+        training_code_excerpt = training_code.get("excerpt") if training_code else None
+        if training_code_filename or training_code_excerpt:
+            training_code_text = (
+                f"Dosya: {training_code_filename or 'Belirtilmedi'}\n\n{training_code_excerpt or ''}"
+            ).strip()
+            if not training_code_text:
+                training_code_text = f"Dosya: {training_code_filename or 'Belirtilmedi'}"
+        else:
+            training_code_text = "Kod paylaşılmadı."
+
         return DL_ANALYSIS_PROMPT.format(
             metrics=metrics_json,
             config=config_json,
             recall=recall_percent,
             precision=precision_percent,
+            map50=map50_percent,
+            f1=f1_percent,
+            project_context=project_json,
+            training_code=training_code_text,
         ).strip()
 
     def _analyze_with_claude(self, prompt: str) -> Dict:
