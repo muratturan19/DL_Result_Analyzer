@@ -557,7 +557,10 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
     { value: 'yolov8-m', label: 'YOLOv8-M' },
     { value: 'yolov8-l', label: 'YOLOv8-L' },
     { value: 'yolov8-seg', label: 'YOLOv8-Seg' },
-    { value: 'yolov11-efficientnet', label: 'YOLO11-EfficientNet' },
+    { value: 'yolov11-n', label: 'YOLO11-N' },
+    { value: 'yolov11-s', label: 'YOLO11-S' },
+    { value: 'yolov11-m', label: 'YOLO11-M' },
+    { value: 'yolov11-l', label: 'YOLO11-L' },
     { value: 'yolov11-seg', label: 'YOLO11-Seg' }
   ];
 

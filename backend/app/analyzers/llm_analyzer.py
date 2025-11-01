@@ -503,10 +503,19 @@ class LLMAnalyzer:
         config: Dict,
         project_context: Optional[Dict] = None,
         training_code: Optional[Dict[str, str]] = None,
+        history: Optional[Dict] = None,
+        artefacts: Optional[Dict] = None,
     ) -> Dict:
         """Create the analysis prompt and dispatch it to the chosen provider."""
 
-        prompt = self._build_prompt(metrics or {}, config or {}, project_context or {}, training_code or {})
+        prompt = self._build_prompt(
+            metrics or {},
+            config or {},
+            project_context or {},
+            training_code or {},
+            history or {},
+            artefacts or {},
+        )
         logger.debug(
             "LLM prompt hazırlandı (provider=%s, uzunluk=%s karakter)",
             self.provider,
@@ -537,6 +546,8 @@ class LLMAnalyzer:
         config: Dict,
         project_context: Optional[Dict] = None,
         training_code: Optional[Dict[str, str]] = None,
+        history: Optional[Dict] = None,
+        artefacts: Optional[Dict] = None,
     ) -> str:
         """Compose a domain informed prompt for the LLM.
 
@@ -579,6 +590,9 @@ class LLMAnalyzer:
         else:
             training_code_text = "Kod paylaşılmadı."
 
+        history_json = json.dumps(history or {}, indent=2, ensure_ascii=False)
+        artefacts_json = json.dumps(artefacts or {}, indent=2, ensure_ascii=False)
+
         return DL_ANALYSIS_PROMPT.format(
             metrics=metrics_json,
             config=config_json,
@@ -588,6 +602,8 @@ class LLMAnalyzer:
             f1=f1_percent,
             project_context=project_json,
             training_code=training_code_text,
+            history=history_json,
+            artefacts=artefacts_json,
         ).strip()
 
     def _analyze_with_claude(self, prompt: str) -> Dict:
