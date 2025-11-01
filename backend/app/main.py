@@ -74,7 +74,7 @@ async def upload_results(
     config_yaml: Optional[UploadFile] = File(None),
     graphs: Optional[List[UploadFile]] = File(None),
     best_model: Optional[UploadFile] = File(None),
-    llm_provider: str = "claude",
+    llm_provider: str = Form("claude"),
 ):
     """
     YOLO eğitim sonuçlarını upload et
