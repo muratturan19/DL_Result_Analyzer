@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import os
@@ -117,6 +118,8 @@ class LLMAnalyzer:
         self.provider = provider
         self._openai_high_reasoning = False
 
+        self._openai_response_format_supported: Optional[bool] = None
+
         if provider == "claude":
             api_key_present = bool(os.getenv("CLAUDE_API_KEY"))
             logger.info(
@@ -166,6 +169,35 @@ class LLMAnalyzer:
                     (),
                     {"chat": chat_stub, "responses": responses_stub},
                 )()
+
+    def _openai_supports_response_format(self) -> bool:
+        """Return True when the OpenAI client supports response_format."""
+
+        if self.provider != "openai":
+            return False
+
+        if self._openai_response_format_supported is not None:
+            return self._openai_response_format_supported
+
+        try:
+            responses_client = getattr(self.client, "responses", None)
+            create_fn = getattr(responses_client, "create", None)
+            if create_fn is None:
+                self._openai_response_format_supported = False
+            else:
+                signature = inspect.signature(create_fn)
+                self._openai_response_format_supported = (
+                    "response_format" in signature.parameters
+                )
+        except (TypeError, ValueError):  # pragma: no cover - defensive against exotic clients
+            self._openai_response_format_supported = False
+
+        if not self._openai_response_format_supported:
+            logger.debug(
+                "OpenAI istemcisi response_format parametresini desteklemiyor; serbest metin moduna geçiliyor."
+            )
+
+        return self._openai_response_format_supported
 
     @staticmethod
     def _try_fix_truncated_json(json_str: str) -> Dict[str, Any] | None:
@@ -601,15 +633,11 @@ class LLMAnalyzer:
         reasoning_effort = "high" if self._openai_high_reasoning else "medium"
 
         try:
-            response = self.client.responses.create(  # type: ignore[attr-defined]
-                model=model_name,
-                temperature=0,
-                reasoning={"effort": reasoning_effort},
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": GPT_ANALYSIS_JSON_SCHEMA,
-                },
-                input=[
+            request_kwargs: Dict[str, Any] = {
+                "model": model_name,
+                "temperature": 0,
+                "reasoning": {"effort": reasoning_effort},
+                "input": [
                     {
                         "role": "system",
                         "content": [
@@ -623,6 +651,16 @@ class LLMAnalyzer:
                         ],
                     },
                 ],
+            }
+
+            if self._openai_supports_response_format():
+                request_kwargs["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": GPT_ANALYSIS_JSON_SCHEMA,
+                }
+
+            response = self.client.responses.create(  # type: ignore[attr-defined]
+                **request_kwargs
             )
         except (TimeoutError, OpenAIConnectionError, OpenAIAPIError) as exc:  # pragma: no cover - network calls
             logger.exception("OpenAI isteği başarısız oldu")
