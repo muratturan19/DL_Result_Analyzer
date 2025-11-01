@@ -186,8 +186,14 @@ class LLMAnalyzer:
                 self._openai_response_format_supported = False
             else:
                 signature = inspect.signature(create_fn)
+                parameters = signature.parameters
                 self._openai_response_format_supported = (
-                    "response_format" in signature.parameters
+                    "response_format" in parameters
+                    or any(
+                        parameter.kind
+                        == inspect.Parameter.VAR_KEYWORD
+                        for parameter in parameters.values()
+                    )
                 )
         except (TypeError, ValueError):  # pragma: no cover - defensive against exotic clients
             self._openai_response_format_supported = False
@@ -641,13 +647,13 @@ class LLMAnalyzer:
                     {
                         "role": "system",
                         "content": [
-                            {"type": "text", "text": system_instruction},
+                            {"type": "input_text", "text": system_instruction},
                         ],
                     },
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": prompt},
+                            {"type": "input_text", "text": prompt},
                         ],
                     },
                 ],
@@ -669,10 +675,16 @@ class LLMAnalyzer:
         raw_text = ""
         output_blocks = getattr(response, "output", None) or []
         if output_blocks:
-            first_output = output_blocks[0]
-            content_blocks = getattr(first_output, "content", None) or []
-            if content_blocks:
-                raw_text = getattr(content_blocks[0], "text", "") or ""
+            collected_chunks: List[str] = []
+            for output_block in output_blocks:
+                content_blocks = getattr(output_block, "content", None) or []
+                for content in content_blocks:
+                    content_type = getattr(content, "type", "")
+                    if content_type in {"output_text", "text", ""}:
+                        text_value = getattr(content, "text", "") or ""
+                        if text_value:
+                            collected_chunks.append(text_value)
+            raw_text = "".join(collected_chunks).strip()
 
         if not raw_text and hasattr(response, "output_text"):
             raw_text = getattr(response, "output_text", "") or ""
