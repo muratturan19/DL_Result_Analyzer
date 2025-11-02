@@ -65,7 +65,8 @@ class YOLOResultParser:
                 return []
 
             series = pd.to_numeric(dataframe[column], errors="coerce")
-            return [float(value) for value in series.fillna(method="ffill").fillna(method="bfill")]
+            filled_series = series.ffill().bfill()
+            return [float(value) for value in filled_series]
 
         epochs: List[float]
         if "epoch" in dataframe.columns:
