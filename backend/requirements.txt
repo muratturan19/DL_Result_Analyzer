@@ -16,6 +16,7 @@ numpy
 # Visualization
 pillow
 matplotlib
+reportlab
 
 # Testing
 pytest

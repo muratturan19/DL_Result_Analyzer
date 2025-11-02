@@ -1175,6 +1175,96 @@ const AIAnalysis = ({ analysis, isLoading }) => {
   );
 };
 
+const ReportExportActions = ({ reportId, projectName }) => {
+  const [isExporting, setIsExporting] = useState(false);
+  const [error, setError] = useState(null);
+
+  const slugify = (value) => {
+    if (!value) return 'dl-result-report';
+    return value
+      .toString()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/gi, '-')
+      .replace(/^-+|-+$/g, '')
+      .replace(/-{2,}/g, '-') || 'dl-result-report';
+  };
+
+  const handleExport = async (format) => {
+    if (!reportId) return;
+
+    setIsExporting(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`http://localhost:8000/api/report/${reportId}/export?format=${format}`);
+      if (!response.ok) {
+        let message = 'Rapor dışa aktarılamadı.';
+        try {
+          const payload = await response.json();
+          if (payload?.detail) {
+            message = Array.isArray(payload.detail) ? payload.detail[0]?.msg || message : payload.detail;
+          }
+        } catch (err) {
+          console.debug('Export error payload parse failed', err);
+        }
+        throw new Error(message);
+      }
+
+      const blob = await response.blob();
+      const extension = format === 'pdf' ? 'pdf' : 'html';
+      const slug = slugify(projectName);
+      const filename = `${slug}-${reportId.slice(0, 8)}.${extension}`;
+
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Rapor dışa aktarılamadı.';
+      setError(message);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  if (!reportId) {
+    return null;
+  }
+
+  return (
+    <div className="export-card">
+      <div>
+        <h2>📄 Raporu Dışa Aktar</h2>
+        <p>LLM analizi ve metrikleri PDF veya HTML olarak kaydedin.</p>
+      </div>
+      <div className="export-actions">
+        <button
+          type="button"
+          className="export-button"
+          disabled={isExporting}
+          onClick={() => handleExport('pdf')}
+        >
+          PDF indir
+        </button>
+        <button
+          type="button"
+          className="export-button secondary"
+          disabled={isExporting}
+          onClick={() => handleExport('html')}
+        >
+          HTML indir
+        </button>
+      </div>
+      {isExporting && <p className="export-status">Rapor hazırlanıyor…</p>}
+      {error && <p className="export-error">{error}</p>}
+    </div>
+  );
+};
+
 const ReportAssistant = ({ reportId, qaHistory, onAsk, isLoading, error, dataset }) => {
   const [question, setQuestion] = useState('');
   const [localError, setLocalError] = useState(null);
@@ -1326,6 +1416,7 @@ function App() {
   const [history, setHistory] = useState(null);
   const [analysis, setAnalysis] = useState(null);
   const [config, setConfig] = useState(null);
+  const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState(null);
   const [error, setError] = useState(null);
@@ -1355,6 +1446,7 @@ function App() {
       setQaHistory([]);
       setQaError(null);
       setQaLoading(false);
+      setProject(null);
       return;
     }
 
@@ -1366,6 +1458,7 @@ function App() {
       setQaHistory([]);
       setQaError(null);
       setQaLoading(false);
+      setProject(null);
       return;
     }
 
@@ -1377,6 +1470,7 @@ function App() {
       setQaHistory([]);
       setQaError(null);
       setQaLoading(false);
+      setProject(null);
       setTimeout(() => setLoadingStatus(null), 3000);
       return;
     }
@@ -1386,6 +1480,7 @@ function App() {
     setMetrics(responseMetrics || null);
     setHistory(responseHistory || null);
     setConfig(responseConfig || null);
+    setProject(uploadResponse.project || responseConfig?.project_context || null);
     setAnalysis(null);
     setReportId(uploadResponse.report_id || null);
     setQaHistory(Array.isArray(uploadResponse.qa_history) ? uploadResponse.qa_history : []);
@@ -1530,6 +1625,18 @@ function App() {
             <TrainingCharts history={history} />
             <ConfusionMatrix metrics={metrics} />
             <AIAnalysis analysis={analysis} isLoading={loading} />
+            {reportId && (
+              <ReportExportActions
+                reportId={reportId}
+                projectName={
+                  (project && (project.project_name || project.name))
+                  || config?.project_context?.project_name
+                  || config?.project_context?.name
+                  || config?.project?.project_name
+                  || config?.project?.name
+                }
+              />
+            )}
             {reportId && (
               <ReportAssistant
                 reportId={reportId}

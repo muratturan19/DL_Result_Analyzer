@@ -125,3 +125,32 @@ class TestAPI:
         references = qa_data.get("qa", {}).get("references", [])
         assert isinstance(references, list)
         assert references
+
+    def test_report_export_html_and_pdf(
+        self,
+        client,
+        sample_csv_path,
+        sample_yaml_path,
+    ):
+        """Uploaded raporlar HTML ve PDF olarak dışa aktarılabilir."""
+
+        with sample_csv_path.open("rb") as csv_file, sample_yaml_path.open("rb") as yaml_file:
+            files = [
+                ("results_csv", ("sample_results.csv", csv_file, "text/csv")),
+                ("config_yaml", ("sample_args.yaml", yaml_file, "application/x-yaml")),
+            ]
+            upload_response = client.post("/api/upload/results", files=files)
+
+        assert upload_response.status_code == 200
+        report_id = upload_response.json().get("report_id")
+        assert report_id
+
+        html_response = client.get(f"/api/report/{report_id}/export", params={"format": "html"})
+        assert html_response.status_code == 200
+        assert "text/html" in html_response.headers.get("content-type", "")
+        assert "<!DOCTYPE html>" in html_response.text
+
+        pdf_response = client.get(f"/api/report/{report_id}/export", params={"format": "pdf"})
+        assert pdf_response.status_code == 200
+        assert "application/pdf" in pdf_response.headers.get("content-type", "")
+        assert pdf_response.content.startswith(b"%PDF")
