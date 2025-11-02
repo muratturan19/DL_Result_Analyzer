@@ -4,9 +4,13 @@ import base64
 import json
 import logging
 import os
+import re
 from hashlib import sha256
+from html import escape
+from io import BytesIO
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from textwrap import wrap
 from threading import Lock
 from typing import Dict, List, Optional, Any
 from uuid import uuid4
@@ -15,8 +19,12 @@ import yaml
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import cm
+from reportlab.pdfgen import canvas
 
 load_dotenv()
 
@@ -243,6 +251,444 @@ class QARequest(BaseModel):
 
 
 REPORT_STORE = ReportStore()
+
+
+def _slugify_filename(value: Optional[str], fallback: str = "dl-result-report") -> str:
+    if not value:
+        return fallback
+    normalized = re.sub(r"[^a-zA-Z0-9-]+", "-", value.lower())
+    normalized = re.sub(r"-+", "-", normalized).strip("-")
+    return normalized or fallback
+
+
+def _format_percent(value: Optional[float]) -> str:
+    if value is None:
+        return "N/A"
+    try:
+        return f"{float(value) * 100:.2f}%"
+    except (TypeError, ValueError):
+        return "N/A"
+
+
+def _build_metrics_html(metrics: Dict[str, Any]) -> str:
+    rows = []
+    display_map = {
+        "precision": "Precision",
+        "recall": "Recall",
+        "map50": "mAP@0.5",
+        "map50_95": "mAP@0.5:0.95",
+        "loss": "Loss",
+    }
+    for key, label in display_map.items():
+        value = metrics.get(key)
+        if key in {"precision", "recall", "map50", "map50_95"}:
+            formatted = _format_percent(value)
+        elif value is None:
+            formatted = "N/A"
+        else:
+            formatted = f"{value:.4f}" if isinstance(value, (float, int)) else escape(str(value))
+        rows.append(f"<tr><th>{escape(label)}</th><td>{formatted}</td></tr>")
+    return "\n".join(rows)
+
+
+def _build_list_html(items: List[str]) -> str:
+    if not items:
+        return "<p>Bilgi bulunamadı.</p>"
+    escaped_items = "".join(f"<li>{escape(item)}</li>" for item in items if item)
+    return f"<ul>{escaped_items}</ul>" if escaped_items else "<p>Bilgi bulunamadı.</p>"
+
+
+def _build_actions_html(actions: List[Dict[str, Any]]) -> str:
+    if not actions:
+        return "<p>Aksiyon önerisi bulunamadı.</p>"
+
+    action_items = []
+    for action in actions:
+        module = escape(str(action.get("module", ""))) if action.get("module") else "Genel"
+        recommendation = escape(str(action.get("recommendation", "")))
+        evidence = escape(str(action.get("evidence", "")))
+        expected = escape(str(action.get("expected_gain", "")))
+        validation = escape(str(action.get("validation_plan", "")))
+
+        detail_parts = [f"<strong>Modül:</strong> {module}"]
+        if evidence:
+            detail_parts.append(f"<strong>Kanıt:</strong> {evidence}")
+        if recommendation:
+            detail_parts.append(f"<strong>Öneri:</strong> {recommendation}")
+        if expected:
+            detail_parts.append(f"<strong>Beklenen Kazanç:</strong> {expected}")
+        if validation:
+            detail_parts.append(f"<strong>Doğrulama Planı:</strong> {validation}")
+
+        action_items.append(f"<li><div class=\"action-item\">{'<br/>'.join(detail_parts)}</div></li>")
+
+    return f"<ul class=\"action-list\">{''.join(action_items)}</ul>"
+
+
+def _build_dataset_summary(dataset: Dict[str, Any]) -> str:
+    if not dataset:
+        return ""
+
+    count_map = [
+        ("Eğitim", dataset.get("train_images")),
+        ("Doğrulama", dataset.get("val_images")),
+        ("Test", dataset.get("test_images")),
+        ("Toplam", dataset.get("total_images")),
+    ]
+
+    count_items = []
+    for label, value in count_map:
+        if value is None:
+            continue
+        try:
+            numeric = float(value)
+            display = f"{int(numeric):,}".replace(",", ".")
+        except (TypeError, ValueError):
+            display = escape(str(value))
+        count_items.append(f"<div class=\"dataset-count\"><span>{escape(label)}</span><strong>{display}</strong></div>")
+
+    classes = dataset.get("class_names")
+    class_items = ""
+    if isinstance(classes, list) and classes:
+        chips = "".join(f"<span class=\"dataset-chip\">{escape(str(item))}</span>" for item in classes)
+        class_items = f"<div class=\"dataset-classes\"><span>Sınıflar:</span>{chips}</div>"
+
+    parts = []
+    if count_items:
+        parts.append(f"<div class=\"dataset-counts\">{''.join(count_items)}</div>")
+    if class_items:
+        parts.append(class_items)
+
+    return "".join(parts)
+
+
+def _generate_html_report(report_id: str, context: Dict[str, Any]) -> str:
+    project_context = context.get("project") or context.get("config", {}).get("project_context", {}) or {}
+    project_name = project_context.get("project_name") or "DL Result Report"
+    generated_at = datetime.now(timezone.utc).astimezone().strftime("%d %B %Y %H:%M")
+
+    metrics_section = _build_metrics_html(context.get("metrics", {}))
+    dataset_section = _build_dataset_summary(context.get("config", {}).get("dataset", {}))
+
+    analysis = context.get("analysis", {}) or {}
+    strengths_html = _build_list_html(analysis.get("strengths", []))
+    weaknesses_html = _build_list_html(analysis.get("weaknesses", []))
+    actions_html = _build_actions_html(analysis.get("actions", []))
+
+    risk = analysis.get("risk")
+    risk_display = escape(str(risk)).upper() if risk else "BİLİNMİYOR"
+
+    deploy_profile = analysis.get("deploy_profile", {}) or {}
+    deploy_items = "".join(
+        f"<li><strong>{escape(str(key))}:</strong> {escape(str(value))}</li>" for key, value in deploy_profile.items()
+    )
+
+    qa_history = context.get("qa_history", []) or []
+    qa_items = []
+    for entry in qa_history[-5:][::-1]:
+        question = escape(str(entry.get("question", "")))
+        answer = escape(str(entry.get("answer", "")))
+        timestamp = escape(str(entry.get("timestamp", "")))
+        qa_items.append(
+            f"<div class=\"qa-entry\"><div class=\"qa-question\"><strong>Soru:</strong> {question}</div>"
+            f"<div class=\"qa-answer\"><strong>Yanıt:</strong> {answer}</div>"
+            f"<div class=\"qa-timestamp\">{timestamp}</div></div>"
+        )
+
+    deploy_html = f"<ul>{deploy_items}</ul>" if deploy_items else "<p>Bilgi bulunamadı.</p>"
+    qa_history_html = "".join(qa_items) if qa_items else "<p>Henüz takip sorusu yok.</p>"
+
+    summary_text = escape(str(analysis.get("summary", ""))) if analysis.get("summary") else "Henüz özet oluşturulmadı."
+    notes = analysis.get("notes") or analysis.get("error")
+    notes_html = escape(str(notes)) if notes else ""
+
+    return """
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="utf-8" />
+    <title>DL Result Analyzer - Rapor</title>
+    <style>
+        body { font-family: 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; background: #f3f4f6; color: #111827; }
+        header { background: linear-gradient(135deg, #312e81, #6366f1); color: white; padding: 32px; }
+        header h1 { margin: 0 0 8px; font-size: 28px; }
+        header p { margin: 0; font-size: 14px; opacity: 0.85; }
+        main { padding: 32px; }
+        section { background: white; border-radius: 16px; padding: 24px; margin-bottom: 24px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08); }
+        h2 { margin-top: 0; font-size: 22px; color: #1f2937; }
+        table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+        th, td { padding: 12px 16px; text-align: left; }
+        th { background: #eef2ff; font-weight: 600; width: 220px; }
+        tr:nth-child(even) td { background: #f9fafb; }
+        ul { margin: 12px 0; padding-left: 20px; }
+        .dataset-counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-top: 16px; }
+        .dataset-count { background: #eef2ff; border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 4px; }
+        .dataset-count span { font-size: 12px; color: #4f46e5; text-transform: uppercase; letter-spacing: 0.05em; }
+        .dataset-count strong { font-size: 20px; }
+        .dataset-classes { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+        .dataset-classes span { font-weight: 600; color: #1f2937; }
+        .dataset-chip { background: #f3f4f6; padding: 6px 12px; border-radius: 999px; font-size: 13px; }
+        .analysis-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 24px; }
+        .qa-entry { background: #f9fafb; border-radius: 12px; padding: 16px; margin-bottom: 12px; border: 1px solid #e5e7eb; }
+        .qa-question { font-weight: 600; margin-bottom: 8px; }
+        .qa-answer { margin-bottom: 6px; }
+        .qa-timestamp { font-size: 12px; color: #6b7280; }
+        .risk-chip { display: inline-block; padding: 6px 12px; border-radius: 999px; background: #f97316; color: white; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+        .action-list { list-style: none; padding: 0; margin: 12px 0 0; display: flex; flex-direction: column; gap: 12px; }
+        .action-item { background: #f9fafb; padding: 14px; border-radius: 12px; border: 1px solid #e5e7eb; }
+        footer { text-align: center; padding: 24px; color: #6b7280; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>{project_name}</h1>
+        <p>Rapor ID: {report_id} • Oluşturulma: {generated_at}</p>
+    </header>
+    <main>
+        <section>
+            <h2>📊 Metrik Özeti</h2>
+            <table>
+                <tbody>
+                    {metrics_section}
+                </tbody>
+            </table>
+        </section>
+        {('<section><h2>🗂️ Veri Seti Özeti</h2>' + dataset_section + '</section>') if dataset_section else ''}
+        <section>
+            <h2>🤖 AI Analizi</h2>
+            <div class="risk-chip">Risk: {risk_display}</div>
+            <p>{summary_text}</p>
+            {'<div class="analysis-grid"><div><h3>Güçlü Yönler</h3>' + strengths_html + '</div><div><h3>Zayıf Yönler</h3>' + weaknesses_html + '</div></div>'}
+            <div>
+                <h3>🎯 Aksiyon Önerileri</h3>
+                {actions_html}
+            </div>
+            <div>
+                <h3>🚀 Yayın Profili</h3>
+                {deploy_html}
+            </div>
+            {('<div><h3>📝 Notlar</h3><p>' + notes_html + '</p></div>') if notes_html else ''}
+        </section>
+        <section>
+            <h2>💬 Son Sorular</h2>
+            {qa_history_html}
+        </section>
+    </main>
+    <footer>DL_Result_Analyzer • {generated_at}</footer>
+</body>
+</html>
+"""
+
+
+def _generate_pdf_report(report_id: str, context: Dict[str, Any]) -> bytes:
+    buffer = BytesIO()
+    page_width, page_height = A4
+    margin = 2 * cm
+    max_chars = 95
+
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+
+    project_context = context.get("project") or context.get("config", {}).get("project_context", {}) or {}
+    project_name = project_context.get("project_name") or "DL Result Report"
+    generated_at = datetime.now(timezone.utc).astimezone().strftime("%d %B %Y %H:%M")
+
+    pdf.setTitle(f"DL Result Analyzer - {project_name}")
+
+    y_position = page_height - margin
+
+    def ensure_space(lines: int = 1, leading: float = 14.0) -> None:
+        nonlocal y_position
+        if y_position - lines * leading < margin:
+            pdf.showPage()
+            pdf.setFont("Helvetica", 11)
+            y_position = page_height - margin
+
+    def write_line(text: str = "", font: str = "Helvetica", size: int = 11, leading: float = 14.0) -> None:
+        nonlocal y_position
+        ensure_space(1, leading)
+        pdf.setFont(font, size)
+        pdf.drawString(margin, y_position, text)
+        y_position -= leading
+
+    def write_paragraph(text: str, font: str = "Helvetica", size: int = 11, leading: float = 14.0) -> None:
+        nonlocal y_position
+        if not text:
+            return
+        lines = wrap(text, max_chars)
+        ensure_space(len(lines), leading)
+        for line in lines:
+            pdf.setFont(font, size)
+            pdf.drawString(margin, y_position, line)
+            y_position -= leading
+        y_position -= leading * 0.3
+
+    def write_heading(text: str, level: int = 1) -> None:
+        size = 18 if level == 1 else 14
+        leading = 22 if level == 1 else 18
+        write_line(text, font="Helvetica-Bold", size=size, leading=leading)
+
+    def write_bullet(text: str) -> None:
+        nonlocal y_position
+        lines = wrap(text, max_chars - 4)
+        ensure_space(len(lines))
+        for idx, line in enumerate(lines):
+            prefix = "• " if idx == 0 else "  "
+            pdf.setFont("Helvetica", 11)
+            pdf.drawString(margin + (0 if idx == 0 else 10), y_position, prefix + line)
+            y_position -= 14
+        y_position -= 4
+
+    write_heading(project_name, level=1)
+    write_paragraph(f"Rapor ID: {report_id}")
+    write_paragraph(f"Oluşturulma: {generated_at}")
+
+    metrics = context.get("metrics", {}) or {}
+    if metrics:
+        write_heading("Metrik Özeti", level=2)
+        for key, label in [
+            ("precision", "Precision"),
+            ("recall", "Recall"),
+            ("map50", "mAP@0.5"),
+            ("map50_95", "mAP@0.5:0.95"),
+            ("loss", "Loss"),
+        ]:
+            value = metrics.get(key)
+            if key in {"precision", "recall", "map50", "map50_95"}:
+                display = _format_percent(value)
+            elif value is None:
+                display = "N/A"
+            else:
+                display = f"{float(value):.4f}" if isinstance(value, (float, int)) else str(value)
+            write_paragraph(f"{label}: {display}")
+
+    dataset = context.get("config", {}).get("dataset", {}) or {}
+    if dataset:
+        write_heading("Veri Seti Özeti", level=2)
+        for label, key in [
+            ("Eğitim", "train_images"),
+            ("Doğrulama", "val_images"),
+            ("Test", "test_images"),
+            ("Toplam", "total_images"),
+        ]:
+            value = dataset.get(key)
+            if value is None:
+                continue
+            try:
+                display = f"{int(float(value)):,}".replace(",", ".")
+            except (TypeError, ValueError):
+                display = str(value)
+            write_paragraph(f"{label}: {display}")
+        class_names = dataset.get("class_names")
+        if isinstance(class_names, list) and class_names:
+            write_paragraph("Sınıflar:")
+            for class_name in class_names:
+                write_bullet(str(class_name))
+
+    analysis = context.get("analysis", {}) or {}
+    if analysis:
+        write_heading("AI Analizi", level=2)
+        summary = analysis.get("summary")
+        if summary:
+            write_paragraph(summary)
+
+        strengths = analysis.get("strengths") or []
+        if strengths:
+            write_line("Güçlü Yönler", font="Helvetica-Bold", size=12)
+            for item in strengths:
+                write_bullet(str(item))
+
+        weaknesses = analysis.get("weaknesses") or []
+        if weaknesses:
+            write_line("Zayıf Yönler", font="Helvetica-Bold", size=12)
+            for item in weaknesses:
+                write_bullet(str(item))
+
+        actions = analysis.get("actions") or []
+        if actions:
+            write_line("Aksiyon Önerileri", font="Helvetica-Bold", size=12)
+            for action in actions:
+                parts = []
+                module = action.get("module")
+                if module:
+                    parts.append(f"Modül: {module}")
+                recommendation = action.get("recommendation")
+                if recommendation:
+                    parts.append(f"Öneri: {recommendation}")
+                expected = action.get("expected_gain")
+                if expected:
+                    parts.append(f"Beklenen Kazanç: {expected}")
+                evidence = action.get("evidence")
+                if evidence:
+                    parts.append(f"Kanıt: {evidence}")
+                validation = action.get("validation_plan")
+                if validation:
+                    parts.append(f"Doğrulama Planı: {validation}")
+                if parts:
+                    write_bullet(" | ".join(parts))
+
+        risk = analysis.get("risk")
+        if risk:
+            write_paragraph(f"Risk Seviyesi: {str(risk).upper()}")
+
+        deploy_profile = analysis.get("deploy_profile") or {}
+        if deploy_profile:
+            write_line("Yayın Profili", font="Helvetica-Bold", size=12)
+            for key, value in deploy_profile.items():
+                write_paragraph(f"{key}: {value}")
+
+        notes = analysis.get("notes") or analysis.get("error")
+        if notes:
+            write_paragraph(f"Notlar: {notes}")
+
+    qa_history = context.get("qa_history", []) or []
+    if qa_history:
+        write_heading("Son Sorular", level=2)
+        for entry in qa_history[-5:][::-1]:
+            write_paragraph(f"Soru: {entry.get('question', '')}")
+            write_paragraph(f"Yanıt: {entry.get('answer', '')}")
+            timestamp = entry.get("timestamp")
+            if timestamp:
+                write_paragraph(f"Zaman Damgası: {timestamp}")
+            write_line()
+
+    write_paragraph(f"Oluşturma Zamanı: {generated_at}")
+    pdf.showPage()
+    pdf.save()
+
+    return buffer.getvalue()
+
+
+@app.get("/api/report/{report_id}/export")
+async def export_report(report_id: str, format: str = "html"):
+    context = REPORT_STORE.get(report_id)
+    if context is None:
+        raise HTTPException(status_code=404, detail="Rapor bulunamadı veya süresi doldu.")
+
+    format_normalized = (format or "html").lower()
+    project_context = context.get("project") or context.get("config", {}).get("project_context", {}) or {}
+    project_name = project_context.get("project_name")
+    slug = _slugify_filename(project_name)
+    timestamp = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d")
+
+    if format_normalized == "html":
+        html_content = _generate_html_report(report_id, context)
+        filename = f"{slug}-{timestamp}.html"
+        return Response(
+            content=html_content,
+            media_type="text/html; charset=utf-8",
+            headers={"Content-Disposition": f"attachment; filename=\"{filename}\""},
+        )
+
+    if format_normalized == "pdf":
+        pdf_bytes = _generate_pdf_report(report_id, context)
+        filename = f"{slug}-{timestamp}.pdf"
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename=\"{filename}\""},
+        )
+
+    raise HTTPException(status_code=400, detail="Desteklenmeyen format. Lütfen 'html' veya 'pdf' kullanın.")
 
 # =============================================================================
 # ENDPOINTS
