@@ -958,7 +958,6 @@ const AIAnalysis = ({ analysis, isLoading }) => {
       ? [analysis.weaknesses]
       : [];
   const deployProfile = analysis.deploy_profile || {};
-  const calibration = analysis.calibration;
 
   const rawRisk = analysis?.risk_level
     || (typeof analysis?.risk === 'object' && analysis?.risk?.level)
@@ -1165,12 +1164,6 @@ const AIAnalysis = ({ analysis, isLoading }) => {
         </div>
       )}
 
-      {calibration && (
-        <div className="analysis-section">
-          <h3>🎯 Kalibrasyon Bulguları</h3>
-          <pre className="calibration-block">{JSON.stringify(calibration, null, 2)}</pre>
-        </div>
-      )}
     </div>
   );
 };
