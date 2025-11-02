@@ -1906,7 +1906,7 @@ function App() {
       </main>
 
       <footer className="app-footer">
-        <p>FKT AI Projects © 2025</p>
+        <p>Murat Turan AI Projects © 2025</p>
       </footer>
     </>
   );
@@ -1930,7 +1930,7 @@ function App() {
       </main>
 
       <footer className="app-footer">
-        <p>FKT AI Projects © 2025</p>
+        <p>Murat Turan AI Projects © 2025</p>
       </footer>
     </>
   );
