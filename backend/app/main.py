@@ -456,28 +456,6 @@ async def report_qa(report_id: str, payload: QARequest):
     }
 
 
-@app.post("/api/optimize/thresholds")
-async def optimize_thresholds(
-    best_model: UploadFile = File(...),
-    data_yaml: UploadFile = File(...),
-    iou_range: str = Form(...),
-    conf_range: str = Form(...),
-):
-    """Temporarily disabled until real YOLO evaluation is implemented."""
-
-    logger.warning(
-        "Threshold optimizer endpoint was called but the feature is disabled until real YOLO"
-        " evaluation is implemented."
-    )
-    raise HTTPException(
-        status_code=501,
-        detail=(
-            "Threshold optimizasyonu backend'de henüz gerçek YOLO değerlendirmesiyle"
-            " entegre edilmedi. Güvenilir sonuçlar için bu özellik devre dışıdır."
-        ),
-    )
-
-
 def _parse_range_payload(payload: str, name: str) -> Dict[str, float]:
     try:
         data = json.loads(payload)
@@ -560,6 +538,12 @@ async def optimize_thresholds(
     data_path = uploads_dir / data_filename
     model_path.write_bytes(model_bytes)
     data_path.write_bytes(data_bytes)
+
+    logger.info(
+        "Received threshold optimization request with model=%s data=%s",
+        model_filename,
+        data_filename,
+    )
 
     iou_payload = _parse_range_payload(iou_range, "iou_range")
     conf_payload = _parse_range_payload(conf_range, "conf_range")
