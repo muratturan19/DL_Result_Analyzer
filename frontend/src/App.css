@@ -1128,6 +1128,65 @@ body {
   color: var(--text-secondary);
 }
 
+.link-button {
+  background: none;
+  border: none;
+  color: var(--primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
+.artifact-pill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.6rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.artifact-pill.upload {
+  background: rgba(79, 70, 229, 0.08);
+  border-color: rgba(79, 70, 229, 0.2);
+  color: var(--primary);
+}
+
+.artifact-pill.server {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.25);
+  color: var(--success);
+}
+
+.split-select {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.split-select select {
+  padding: 0.65rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  font-weight: 600;
+}
+
+.split-hint {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
 .range-input-group {
   display: flex;
   flex-direction: column;
@@ -1190,9 +1249,93 @@ body {
   border: 1px solid rgba(239, 68, 68, 0.2);
 }
 
+.optimizer-summary {
+  background: linear-gradient(135deg, rgba(79, 70, 229, 0.12), rgba(14, 165, 233, 0.08));
+  border-radius: 18px;
+  padding: 1.75rem;
+  border: 1px solid rgba(79, 70, 229, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  box-shadow: 0 20px 45px rgba(79, 70, 229, 0.12);
+}
+
+.summary-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.summary-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.85rem;
+  border-radius: 999px;
+  background: rgba(79, 70, 229, 0.2);
+  color: var(--primary);
+  font-size: 0.75rem;
+  font-weight: 700;
+  width: fit-content;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.summary-header h3 {
+  margin: 0;
+  font-size: 1.9rem;
+}
+
+.summary-header p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
+
+.summary-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1rem;
+}
+
+.summary-metric {
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 14px;
+  padding: 1rem;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.summary-metric span {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.summary-metric strong {
+  font-size: 1.25rem;
+  color: var(--text);
+}
+
+.summary-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.summary-note {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
 .heatmap-wrapper {
   display: grid;
-  gap: 1rem;
+  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
 }
 
 .heatmap-card {

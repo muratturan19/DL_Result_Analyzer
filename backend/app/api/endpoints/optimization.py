@@ -6,10 +6,11 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Optional
 
 import yaml
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -88,6 +89,34 @@ def _parse_range_payload(raw_payload: str) -> tuple[list[float], list[float]]:
     )
 
     return iou_values, conf_values
+
+
+def _parse_single_range(raw_payload: str, name: str) -> List[float]:
+    try:
+        payload = json.loads(raw_payload)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"{name} aralığı JSON formatında olmalıdır.") from exc
+
+    if isinstance(payload, dict):
+        return _build_range_from_dict(payload, name)
+    if isinstance(payload, list):
+        return _normalize_float_values(payload, name)
+    raise HTTPException(status_code=400, detail=f"{name} aralığı geçersiz formatta.")
+
+
+def _resolve_existing_file(root: Path, filename: str, *, description: str) -> Path:
+    if not filename:
+        raise HTTPException(status_code=400, detail=f"{description} için dosya adı gerekli.")
+
+    sanitized = Path(filename).name
+    candidate = root / sanitized
+
+    if not candidate.exists():
+        raise HTTPException(status_code=404, detail=f"{description} sunucuda bulunamadı: {sanitized}")
+    if not candidate.is_file():
+        raise HTTPException(status_code=400, detail=f"{description} bir dosya olmalıdır: {sanitized}")
+
+    return candidate
 
 
 def _extract_metric(box_metrics: object, attribute: str) -> float:
@@ -248,9 +277,13 @@ async def _write_upload_to_path(upload: UploadFile, destination: Path) -> None:
 
 @router.post("/thresholds")
 async def optimize_thresholds(
-    best_model: UploadFile = File(...),
-    data_yaml: UploadFile = File(...),
-    ranges: str = Form(...),
+    best_model: UploadFile = File(None),
+    data_yaml: UploadFile = File(None),
+    ranges: Optional[str] = Form(None),
+    iou_range: Optional[str] = Form(None),
+    conf_range: Optional[str] = Form(None),
+    best_model_filename: Optional[str] = Form(None),
+    data_yaml_filename: Optional[str] = Form(None),
     split: str = Form("test"),
 ):
     """Optimize IoU and confidence thresholds via grid search."""
@@ -258,19 +291,52 @@ async def optimize_thresholds(
     if split not in _ALLOWED_SPLITS:
         raise HTTPException(status_code=400, detail=f"Geçersiz split: {split}.")
 
-    iou_values, conf_values = _parse_range_payload(ranges)
+    if best_model is None and not best_model_filename:
+        raise HTTPException(status_code=400, detail="best.pt dosyası sağlanmalıdır.")
+    if data_yaml is None and not data_yaml_filename:
+        raise HTTPException(status_code=400, detail="data.yaml dosyası sağlanmalıdır.")
+
+    if ranges is not None:
+        iou_values, conf_values = _parse_range_payload(ranges)
+    else:
+        if iou_range is None or conf_range is None:
+            raise HTTPException(status_code=400, detail="IoU ve confidence aralıkları belirtilmelidir.")
+        iou_values = _parse_single_range(iou_range, "IoU")
+        conf_values = _parse_single_range(conf_range, "Confidence")
 
     logger.info(
-        "Threshold optimization started for model=%s data=%s", best_model.filename, data_yaml.filename
+        "Threshold optimization started for model=%s data=%s",
+        best_model.filename if best_model else best_model_filename,
+        data_yaml.filename if data_yaml else data_yaml_filename,
     )
 
     with TemporaryDirectory(prefix="threshold_opt_") as tmp_dir:
         tmp_path = Path(tmp_dir)
-        model_path = tmp_path / (Path(best_model.filename or "best.pt").name)
-        data_path = tmp_path / (Path(data_yaml.filename or "data.yaml").name)
+        model_filename = Path(best_model.filename or best_model_filename or "best.pt").name
+        data_filename = Path(data_yaml.filename or data_yaml_filename or "data.yaml").name
 
-        await _write_upload_to_path(best_model, model_path)
-        await _write_upload_to_path(data_yaml, data_path)
+        model_path = tmp_path / model_filename
+        data_path = tmp_path / data_filename
+
+        if best_model is not None:
+            await _write_upload_to_path(best_model, model_path)
+        else:
+            existing_model = _resolve_existing_file(
+                Path("uploads") / "models",
+                best_model_filename or "best.pt",
+                description="best.pt",
+            )
+            shutil.copy2(existing_model, model_path)
+
+        if data_yaml is not None:
+            await _write_upload_to_path(data_yaml, data_path)
+        else:
+            existing_yaml = _resolve_existing_file(
+                Path("uploads"),
+                data_yaml_filename or "data.yaml",
+                description="data.yaml",
+            )
+            shutil.copy2(existing_yaml, data_path)
 
         try:
             model = await run_in_threadpool(YOLO, str(model_path))
@@ -291,8 +357,8 @@ async def optimize_thresholds(
     best_candidate = _select_best_candidate(flat_results)
     production_config = _build_production_config(
         best=best_candidate,
-        model_filename=Path(best_model.filename or "best.pt").name,
-        data_filename=Path(data_yaml.filename or "data.yaml").name,
+        model_filename=model_filename,
+        data_filename=data_filename,
         split=split,
         task=task,
     )

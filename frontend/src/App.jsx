@@ -378,8 +378,27 @@ const HeatmapGrid = ({ title, metric, data, xValues, yValues }) => {
 };
 
 const ThresholdOptimizer = ({ initialArtifacts }) => {
-  const [bestFile, setBestFile] = useState(initialArtifacts?.best || null);
-  const [dataFile, setDataFile] = useState(initialArtifacts?.yaml || null);
+  const [bestSource, setBestSource] = useState(() => {
+    const artifact = initialArtifacts?.best;
+    if (artifact instanceof File) {
+      return { kind: 'upload', file: artifact };
+    }
+    if (typeof artifact === 'string' && artifact) {
+      return { kind: 'server', filename: artifact };
+    }
+    return null;
+  });
+  const [dataSource, setDataSource] = useState(() => {
+    const artifact = initialArtifacts?.yaml;
+    if (artifact instanceof File) {
+      return { kind: 'upload', file: artifact };
+    }
+    if (typeof artifact === 'string' && artifact) {
+      return { kind: 'server', filename: artifact };
+    }
+    return null;
+  });
+  const [split, setSplit] = useState('test');
   const [iouRange, setIouRange] = useState({ start: 0.3, end: 0.7, step: 0.05 });
   const [confRange, setConfRange] = useState({ start: 0.1, end: 0.5, step: 0.05 });
   const [result, setResult] = useState(null);
@@ -387,17 +406,119 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    if (initialArtifacts?.best && (!bestFile || initialArtifacts.best.name !== bestFile.name)) {
-      setBestFile(initialArtifacts.best);
+    if (!initialArtifacts) return;
+
+    const bestArtifact = initialArtifacts.best;
+    if (bestArtifact instanceof File) {
+      setBestSource((prev) => {
+        if (prev?.kind === 'upload' && prev.file === bestArtifact) {
+          return prev;
+        }
+        return { kind: 'upload', file: bestArtifact };
+      });
+    } else if (typeof bestArtifact === 'string' && bestArtifact) {
+      setBestSource((prev) => {
+        if (prev?.kind === 'upload') {
+          return prev;
+        }
+        if (prev?.kind === 'server' && prev.filename === bestArtifact) {
+          return prev;
+        }
+        return { kind: 'server', filename: bestArtifact };
+      });
     }
-    if (initialArtifacts?.yaml && (!dataFile || initialArtifacts.yaml.name !== dataFile.name)) {
-      setDataFile(initialArtifacts.yaml);
+
+    const yamlArtifact = initialArtifacts.yaml;
+    if (yamlArtifact instanceof File) {
+      setDataSource((prev) => {
+        if (prev?.kind === 'upload' && prev.file === yamlArtifact) {
+          return prev;
+        }
+        return { kind: 'upload', file: yamlArtifact };
+      });
+    } else if (typeof yamlArtifact === 'string' && yamlArtifact) {
+      setDataSource((prev) => {
+        if (prev?.kind === 'upload') {
+          return prev;
+        }
+        if (prev?.kind === 'server' && prev.filename === yamlArtifact) {
+          return prev;
+        }
+        return { kind: 'server', filename: yamlArtifact };
+      });
     }
   }, [initialArtifacts]);
 
+  const serverBestName = useMemo(() => {
+    if (initialArtifacts?.serverBest) return initialArtifacts.serverBest;
+    if (typeof initialArtifacts?.best === 'string') return initialArtifacts.best;
+    return null;
+  }, [initialArtifacts]);
+
+  const serverYamlName = useMemo(() => {
+    if (initialArtifacts?.serverYaml) return initialArtifacts.serverYaml;
+    if (typeof initialArtifacts?.yaml === 'string') return initialArtifacts.yaml;
+    return null;
+  }, [initialArtifacts]);
+
+  const combinationsTested = useMemo(() => {
+    if (!result?.heatmap?.values) return 0;
+    return result.heatmap.values.length;
+  }, [result]);
+
+  const updateIouRange = (key, value) => {
+    const numeric = Number(value);
+    setIouRange((prev) => {
+      if (!Number.isFinite(numeric)) {
+        return prev;
+      }
+      if (key === 'start') {
+        const start = Math.min(Math.max(numeric, 0.1), 0.9);
+        const end = Math.min(0.95, Math.max(prev.end, start + 0.01));
+        return { ...prev, start, end };
+      }
+      if (key === 'end') {
+        const end = Math.min(Math.max(numeric, prev.start + 0.01), 0.95);
+        return { ...prev, end };
+      }
+      if (key === 'step') {
+        const step = Math.min(Math.max(numeric, 0.01), 0.3);
+        return { ...prev, step };
+      }
+      return prev;
+    });
+  };
+
+  const updateConfRange = (key, value) => {
+    const numeric = Number(value);
+    setConfRange((prev) => {
+      if (!Number.isFinite(numeric)) {
+        return prev;
+      }
+      if (key === 'start') {
+        const start = Math.min(Math.max(numeric, 0.05), 0.8);
+        const end = Math.min(0.95, Math.max(prev.end, start + 0.01));
+        return { ...prev, start, end };
+      }
+      if (key === 'end') {
+        const end = Math.min(Math.max(numeric, prev.start + 0.01), 0.95);
+        return { ...prev, end };
+      }
+      if (key === 'step') {
+        const step = Math.min(Math.max(numeric, 0.01), 0.3);
+        return { ...prev, step };
+      }
+      return prev;
+    });
+  };
+
   const handleOptimize = async () => {
-    if (!bestFile || !dataFile) {
-      setError('best.pt ve data.yaml dosyalarını seçmelisiniz.');
+    if (!bestSource) {
+      setError('best.pt dosyası gerekli. Sunucuda kayıtlı değilse dosya seçin.');
+      return;
+    }
+    if (!dataSource) {
+      setError('data.yaml dosyası gerekli. Sunucuda kayıtlı değilse dosya seçin.');
       return;
     }
 
@@ -406,10 +527,26 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
     setIsRunning(true);
 
     const formData = new FormData();
-    formData.append('best_model', bestFile);
-    formData.append('data_yaml', dataFile);
-    formData.append('iou_range', JSON.stringify(iouRange));
-    formData.append('conf_range', JSON.stringify(confRange));
+    if (bestSource.kind === 'upload') {
+      formData.append('best_model', bestSource.file);
+    } else if (bestSource.kind === 'server') {
+      formData.append('best_model_filename', bestSource.filename);
+    }
+
+    if (dataSource.kind === 'upload') {
+      formData.append('data_yaml', dataSource.file);
+    } else if (dataSource.kind === 'server') {
+      formData.append('data_yaml_filename', dataSource.filename);
+    }
+
+    formData.append(
+      'ranges',
+      JSON.stringify({
+        iou: iouRange,
+        confidence: confRange
+      })
+    );
+    formData.append('split', split);
 
     try {
       const response = await fetch('http://localhost:8000/api/optimize/thresholds', {
@@ -417,9 +554,12 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
         body: formData
       });
 
-      const payload = await response.json();
+      const payload = await response.json().catch(() => null);
       if (!response.ok) {
-        throw new Error(payload?.detail || 'Optimizasyon başarısız oldu');
+        const message =
+          payload?.detail ||
+          'Optimizasyon başarısız oldu. Model ve data dosyalarının erişilebilir olduğundan emin olun.';
+        throw new Error(message);
       }
 
       setResult(payload);
@@ -427,10 +567,10 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
       console.error('Threshold optimization failed:', err);
       setResult(null);
       setError(
-        err.message ||
-          'Optimizasyon sırasında hata oluştu. Backend şu anda gerçek YOLO değerlendirmesi sunmuyor olabilir.'
+        err instanceof Error
+          ? err.message
+          : 'Optimizasyon sırasında hata oluştu. Backend şu anda gerçek YOLO değerlendirmesi sunmuyor olabilir.'
       );
-      setError(err.message || 'Optimizasyon sırasında hata oluştu.');
     } finally {
       setIsRunning(false);
     }
@@ -444,10 +584,59 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
     link.click();
   };
 
+  const useServerBest = () => {
+    if (serverBestName) {
+      setBestSource({ kind: 'server', filename: serverBestName });
+    }
+  };
+
+  const useServerYaml = () => {
+    if (serverYamlName) {
+      setDataSource({ kind: 'server', filename: serverYamlName });
+    }
+  };
+
+  const renderArtifactHint = (source, fallbackLabel, serverName, onUseServer) => {
+    if (!source) {
+      if (serverName) {
+        return (
+          <button type="button" className="link-button" onClick={onUseServer}>
+            Sunucudaki {serverName} dosyasını kullan
+          </button>
+        );
+      }
+      return <span className="file-hint">{fallbackLabel}</span>;
+    }
+
+    if (source.kind === 'upload') {
+      return (
+        <div className="artifact-pill upload">
+          <span>Yüklenecek: {source.file.name}</span>
+          {serverName && (
+            <button type="button" className="link-button" onClick={onUseServer}>
+              Sunucu versiyonunu kullan
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <div className="artifact-pill server">
+        <span>Sunucudan kullanılacak: {source.filename}</span>
+      </div>
+    );
+  };
+
+  const bestMetrics = result?.best;
+
   return (
     <div className="optimizer-card">
       <h2>🎛️ Threshold Optimizer</h2>
-      <p className="optimizer-subtitle">IoU ve Confidence kombinasyonlarını grid search ile tarayın, production için en iyi eşikleri belirleyin.</p>
+      <p className="optimizer-subtitle">
+        IoU ve confidence eşiklerini grid search ile tarayın, daha önce yüklediğiniz best.pt dosyasını tekrar kullanarak
+        production için en iyi kombinasyonu bulun.
+      </p>
 
       <div className="optimizer-grid">
         <div className="optimizer-inputs">
@@ -456,9 +645,24 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
             <input
               type="file"
               accept=".pt"
-              onChange={(e) => setBestFile(e.target.files?.[0] || null)}
+              onChange={(e) => {
+                const file = e.target.files?.[0] || null;
+                setError(null);
+                if (file) {
+                  setBestSource({ kind: 'upload', file });
+                } else if (serverBestName) {
+                  setBestSource({ kind: 'server', filename: serverBestName });
+                } else {
+                  setBestSource(null);
+                }
+              }}
             />
-            {bestFile && <span className="file-hint">Seçildi: {bestFile.name}</span>}
+            {renderArtifactHint(
+              bestSource,
+              'Sunucuda kayıtlı best.pt yoksa buradan yükleyin.',
+              serverBestName,
+              useServerBest
+            )}
           </div>
 
           <div className="file-input">
@@ -466,9 +670,34 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
             <input
               type="file"
               accept=".yaml,.yml"
-              onChange={(e) => setDataFile(e.target.files?.[0] || null)}
+              onChange={(e) => {
+                const file = e.target.files?.[0] || null;
+                setError(null);
+                if (file) {
+                  setDataSource({ kind: 'upload', file });
+                } else if (serverYamlName) {
+                  setDataSource({ kind: 'server', filename: serverYamlName });
+                } else {
+                  setDataSource(null);
+                }
+              }}
             />
-            {dataFile && <span className="file-hint">Seçildi: {dataFile.name}</span>}
+            {renderArtifactHint(
+              dataSource,
+              'Veri kümesi config dosyası gereklidir.',
+              serverYamlName,
+              useServerYaml
+            )}
+          </div>
+
+          <div className="split-select">
+            <label>Değerlendirilecek split</label>
+            <select value={split} onChange={(e) => setSplit(e.target.value)}>
+              <option value="test">Test</option>
+              <option value="val">Validation</option>
+              <option value="train">Train</option>
+            </select>
+            <span className="split-hint">Grid search bu split üzerinde çalıştırılır.</span>
           </div>
 
           <div className="range-input-group">
@@ -480,7 +709,7 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
                 min="0.1"
                 max="0.9"
                 value={iouRange.start}
-                onChange={(e) => setIouRange({ ...iouRange, start: Number(e.target.value) })}
+                onChange={(e) => updateIouRange('start', e.target.value)}
               />
               <input
                 type="range"
@@ -488,23 +717,23 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
                 max="0.9"
                 step="0.01"
                 value={iouRange.start}
-                onChange={(e) => setIouRange({ ...iouRange, start: Number(e.target.value) })}
+                onChange={(e) => updateIouRange('start', e.target.value)}
               />
               <input
                 type="range"
-                min={iouRange.start + 0.01}
+                min={Math.min(0.95, Math.max(0.01, iouRange.start + 0.01))}
                 max="0.95"
                 step="0.01"
                 value={iouRange.end}
-                onChange={(e) => setIouRange({ ...iouRange, end: Number(e.target.value) })}
+                onChange={(e) => updateIouRange('end', e.target.value)}
               />
               <input
                 type="number"
                 step="0.01"
                 min="0.01"
-                max="0.5"
+                max="0.95"
                 value={iouRange.end}
-                onChange={(e) => setIouRange({ ...iouRange, end: Number(e.target.value) })}
+                onChange={(e) => updateIouRange('end', e.target.value)}
               />
               <input
                 type="number"
@@ -512,7 +741,7 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
                 min="0.01"
                 max="0.3"
                 value={iouRange.step}
-                onChange={(e) => setIouRange({ ...iouRange, step: Number(e.target.value) })}
+                onChange={(e) => updateIouRange('step', e.target.value)}
               />
             </div>
           </div>
@@ -526,7 +755,7 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
                 min="0.05"
                 max="0.8"
                 value={confRange.start}
-                onChange={(e) => setConfRange({ ...confRange, start: Number(e.target.value) })}
+                onChange={(e) => updateConfRange('start', e.target.value)}
               />
               <input
                 type="range"
@@ -534,15 +763,15 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
                 max="0.8"
                 step="0.01"
                 value={confRange.start}
-                onChange={(e) => setConfRange({ ...confRange, start: Number(e.target.value) })}
+                onChange={(e) => updateConfRange('start', e.target.value)}
               />
               <input
                 type="range"
-                min={confRange.start + 0.01}
+                min={Math.min(0.95, Math.max(0.01, confRange.start + 0.01))}
                 max="0.95"
                 step="0.01"
                 value={confRange.end}
-                onChange={(e) => setConfRange({ ...confRange, end: Number(e.target.value) })}
+                onChange={(e) => updateConfRange('end', e.target.value)}
               />
               <input
                 type="number"
@@ -550,7 +779,7 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
                 min="0.1"
                 max="0.95"
                 value={confRange.end}
-                onChange={(e) => setConfRange({ ...confRange, end: Number(e.target.value) })}
+                onChange={(e) => updateConfRange('end', e.target.value)}
               />
               <input
                 type="number"
@@ -558,7 +787,7 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
                 min="0.01"
                 max="0.3"
                 value={confRange.step}
-                onChange={(e) => setConfRange({ ...confRange, step: Number(e.target.value) })}
+                onChange={(e) => updateConfRange('step', e.target.value)}
               />
             </div>
           </div>
@@ -570,18 +799,50 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
           {error && <div className="optimizer-error">{error}</div>}
         </div>
 
-        {result && (
+        {result && bestMetrics && (
           <div className="optimizer-results">
-            <div className="optimizer-best">
-              <h3>En İyi Eşikler</h3>
-              <p><strong>Confidence:</strong> {result.best.confidence.toFixed(2)}</p>
-              <p><strong>IoU:</strong> {result.best.iou.toFixed(2)}</p>
-              <p><strong>Recall:</strong> {formatPercent(result.best.recall, 2)}</p>
-              <p><strong>Precision:</strong> {formatPercent(result.best.precision, 2)}</p>
-              <p><strong>F1:</strong> {formatPercent(result.best.f1, 2)}</p>
-              <button className="btn-secondary" type="button" onClick={downloadConfig}>
-                production_config.yaml indir
-              </button>
+            <div className="optimizer-summary">
+              <div className="summary-header">
+                <span className="summary-badge">En iyi kombinasyon</span>
+                <h3>
+                  Conf {bestMetrics.confidence.toFixed(2)} · IoU {bestMetrics.iou.toFixed(2)}
+                </h3>
+                <p>
+                  {split.toUpperCase()} split üzerinde {combinationsTested || 'birden çok'} kombinasyon tarandı.
+                </p>
+              </div>
+              <div className="summary-metric-grid">
+                <div className="summary-metric">
+                  <span>Recall</span>
+                  <strong>{formatPercent(bestMetrics.recall, 2)}</strong>
+                </div>
+                <div className="summary-metric">
+                  <span>Precision</span>
+                  <strong>{formatPercent(bestMetrics.precision, 2)}</strong>
+                </div>
+                <div className="summary-metric">
+                  <span>F1 Skoru</span>
+                  <strong>{formatPercent(bestMetrics.f1, 2)}</strong>
+                </div>
+                <div className="summary-metric">
+                  <span>mAP@0.5</span>
+                  <strong>{formatPercent(bestMetrics.map50, 2)}</strong>
+                </div>
+                <div className="summary-metric">
+                  <span>mAP@0.75</span>
+                  <strong>{formatPercent(bestMetrics.map75, 2)}</strong>
+                </div>
+                <div className="summary-metric">
+                  <span>mAP@0.5:0.95</span>
+                  <strong>{formatPercent(bestMetrics.map5095, 2)}</strong>
+                </div>
+              </div>
+              <div className="summary-actions">
+                <button className="btn-secondary" type="button" onClick={downloadConfig}>
+                  production_config.yaml indir
+                </button>
+                <span className="summary-note">Konfigürasyon dosyası production için hazır.</span>
+              </div>
             </div>
 
             <div className="heatmap-wrapper">
@@ -1661,7 +1922,9 @@ function App() {
         <ThresholdOptimizer
           initialArtifacts={{
             best: artifacts?.client?.best || artifacts?.server?.best || null,
-            yaml: artifacts?.client?.yaml || artifacts?.server?.yaml || null
+            yaml: artifacts?.client?.yaml || artifacts?.server?.yaml || null,
+            serverBest: artifacts?.server?.best || null,
+            serverYaml: artifacts?.server?.yaml || null
           }}
         />
       </main>
