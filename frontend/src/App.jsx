@@ -248,6 +248,84 @@ const ConfusionMatrix = ({ metrics }) => {
   );
 };
 
+const DatasetSummary = ({ dataset }) => {
+  if (!dataset || Object.keys(dataset).length === 0) return null;
+
+  const formatCount = (value) => {
+    if (value === null || value === undefined) return null;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) {
+      return numeric.toLocaleString('tr-TR');
+    }
+    if (typeof value === 'string') {
+      return value;
+    }
+    return String(value);
+  };
+
+  const countItems = [
+    { label: 'Eğitim', value: formatCount(dataset.train_images) },
+    { label: 'Doğrulama', value: formatCount(dataset.val_images) },
+    { label: 'Test', value: formatCount(dataset.test_images) },
+    { label: 'Toplam', value: formatCount(dataset.total_images) }
+  ].filter((item) => item.value);
+
+  const pathItems = [
+    { label: 'data.yaml', value: dataset.config_path },
+    { label: 'Train', value: dataset.train_path },
+    { label: 'Val', value: dataset.val_path },
+    { label: 'Test', value: dataset.test_path }
+  ].filter((item) => item.value);
+
+  const classNames = Array.isArray(dataset.class_names) ? dataset.class_names : [];
+
+  return (
+    <div className="dataset-summary-card">
+      <h3>🗃️ Veri Seti Özeti</h3>
+      {countItems.length > 0 && (
+        <div className="dataset-summary-grid">
+          {countItems.map((item) => (
+            <div key={item.label} className="dataset-count">
+              <span className="dataset-count-label">{item.label}</span>
+              <span className="dataset-count-value">{item.value}</span>
+              <span className="dataset-count-unit">görsel</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="dataset-summary-meta">
+        {classNames.length > 0 && (
+          <div className="dataset-classes">
+            <span className="dataset-meta-label">Sınıflar</span>
+            <div className="dataset-class-list">
+              {classNames.map((name, idx) => (
+                <span key={`${name}-${idx}`} className="dataset-class-chip">{name}</span>
+              ))}
+            </div>
+          </div>
+        )}
+        {typeof dataset.class_count === 'number' && (
+          <div className="dataset-meta-item">
+            <span className="dataset-meta-label">Sınıf Sayısı</span>
+            <span className="dataset-meta-value">{dataset.class_count}</span>
+          </div>
+        )}
+        {pathItems.length > 0 && (
+          <div className="dataset-paths">
+            {pathItems.map((item) => (
+              <div key={item.label} className="dataset-meta-item">
+                <span className="dataset-meta-label">{item.label}</span>
+                <span className="dataset-meta-value dataset-path-value">{item.value}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const HeatmapGrid = ({ title, metric, data, xValues, yValues }) => {
   if (!data || !xValues || !yValues) return null;
 
@@ -1097,6 +1175,152 @@ const AIAnalysis = ({ analysis, isLoading }) => {
   );
 };
 
+const ReportAssistant = ({ reportId, qaHistory, onAsk, isLoading, error, dataset }) => {
+  const [question, setQuestion] = useState('');
+  const [localError, setLocalError] = useState(null);
+
+  const datasetCounts = useMemo(() => {
+    if (!dataset) return [];
+    const entries = [
+      { label: 'Eğitim', value: dataset.train_images },
+      { label: 'Doğrulama', value: dataset.val_images },
+      { label: 'Test', value: dataset.test_images },
+      { label: 'Toplam', value: dataset.total_images }
+    ];
+    return entries
+      .map(({ label, value }) => {
+        if (value === null || value === undefined) return null;
+        const numeric = Number(value);
+        if (Number.isFinite(numeric)) {
+          return `${label}: ${numeric.toLocaleString('tr-TR')} görsel`;
+        }
+        if (typeof value === 'string' && value.trim()) {
+          return `${label}: ${value}`;
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }, [dataset]);
+
+  const orderedHistory = useMemo(() => {
+    if (!Array.isArray(qaHistory)) return [];
+    return [...qaHistory].reverse();
+  }, [qaHistory]);
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    const trimmed = question.trim();
+    if (!trimmed) {
+      setLocalError('Lütfen bir soru yazın.');
+      return;
+    }
+
+    try {
+      setLocalError(null);
+      await onAsk(trimmed);
+      setQuestion('');
+    } catch (err) {
+      setLocalError(err.message || 'Soru gönderilemedi.');
+    }
+  };
+
+  const renderReferences = (references = []) => {
+    if (!references || references.length === 0) return null;
+    return (
+      <div className="qa-section">
+        <span className="qa-section-title">Referanslar</span>
+        <ul>
+          {references.map((ref, idx) => (
+            <li key={`${ref}-${idx}`}>{ref}</li>
+          ))}
+        </ul>
+      </div>
+    );
+  };
+
+  const renderFollowUps = (followUps = []) => {
+    if (!followUps || followUps.length === 0) return null;
+    return (
+      <div className="qa-section">
+        <span className="qa-section-title">Önerilen sonraki sorular</span>
+        <ul>
+          {followUps.map((item, idx) => (
+            <li key={`${item}-${idx}`}>{item}</li>
+          ))}
+        </ul>
+      </div>
+    );
+  };
+
+  return (
+    <div className="qa-card">
+      <div className="qa-card-header">
+        <div>
+          <h2>💬 Rapor Asistanı</h2>
+          <p>Hazırlanan raporla ilgili ek sorular sorup açıklama alın.</p>
+        </div>
+        {reportId && <span className="qa-report-id">ID: {reportId.slice(0, 8)}…</span>}
+      </div>
+
+      {datasetCounts.length > 0 && (
+        <div className="qa-dataset-callout">
+          <span className="qa-dataset-label">Veri seti görsel sayıları:</span>
+          <span className="qa-dataset-values">{datasetCounts.join(' • ')}</span>
+        </div>
+      )}
+
+      <form className="qa-form" onSubmit={handleSubmit}>
+        <textarea
+          placeholder="Örn. Eğitimde toplam kaç görsel kullanıldı, recall neden hedefin altında?"
+          value={question}
+          onChange={(event) => setQuestion(event.target.value)}
+          disabled={isLoading}
+          rows={3}
+        />
+        {(localError || error) && (
+          <div className="qa-error">{localError || error}</div>
+        )}
+        <div className="qa-form-actions">
+          <button type="submit" className="btn-primary" disabled={isLoading || !question.trim()}>
+            {isLoading ? '🤖 Yanıt aranıyor…' : 'Soruyu Gönder'}
+          </button>
+        </div>
+      </form>
+
+      <div className="qa-history">
+        {orderedHistory.length === 0 ? (
+          <p className="qa-empty">Henüz soru sorulmadı. İlk soruyu sen sor!</p>
+        ) : (
+          orderedHistory.map((entry, idx) => (
+            <div key={entry.timestamp || idx} className="qa-entry">
+              <div className="qa-entry-header">
+                <span className="qa-entry-index">Soru #{orderedHistory.length - idx}</span>
+                {entry.timestamp && <span className="qa-entry-timestamp">{entry.timestamp}</span>}
+              </div>
+              <div className="qa-question">
+                <span className="qa-section-title">Soru</span>
+                <p>{entry.question}</p>
+              </div>
+              <div className="qa-answer">
+                <span className="qa-section-title">Yanıt</span>
+                <p style={{ whiteSpace: 'pre-line' }}>{entry.answer || 'Yanıt bulunamadı.'}</p>
+              </div>
+              {renderReferences(entry.references)}
+              {renderFollowUps(entry.follow_up_questions)}
+              {entry.notes && (
+                <div className="qa-section">
+                  <span className="qa-section-title">Not</span>
+                  <p>{entry.notes}</p>
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+};
+
 function App() {
   const [metrics, setMetrics] = useState(null);
   const [history, setHistory] = useState(null);
@@ -1108,6 +1332,10 @@ function App() {
   const [llmProvider, setLlmProvider] = useState('claude');
   const [artifacts, setArtifacts] = useState({});
   const [activePage, setActivePage] = useState('dashboard');
+  const [reportId, setReportId] = useState(null);
+  const [qaHistory, setQaHistory] = useState([]);
+  const [qaLoading, setQaLoading] = useState(false);
+  const [qaError, setQaError] = useState(null);
 
   const navigationItems = [
     { id: 'dashboard', label: 'Model Özeti', icon: '📊' },
@@ -1123,6 +1351,10 @@ function App() {
     if (!uploadResponse) {
       setLoading(false);
       setLoadingStatus(null);
+      setReportId(null);
+      setQaHistory([]);
+      setQaError(null);
+      setQaLoading(false);
       return;
     }
 
@@ -1130,6 +1362,10 @@ function App() {
       setLoading(true);
       setLoadingStatus('uploading');
       setError(null);
+      setReportId(null);
+      setQaHistory([]);
+      setQaError(null);
+      setQaLoading(false);
       return;
     }
 
@@ -1137,6 +1373,10 @@ function App() {
       setError(uploadResponse.error);
       setLoading(false);
       setLoadingStatus('error');
+      setReportId(null);
+      setQaHistory([]);
+      setQaError(null);
+      setQaLoading(false);
       setTimeout(() => setLoadingStatus(null), 3000);
       return;
     }
@@ -1147,6 +1387,10 @@ function App() {
     setHistory(responseHistory || null);
     setConfig(responseConfig || null);
     setAnalysis(null);
+    setReportId(uploadResponse.report_id || null);
+    setQaHistory(Array.isArray(uploadResponse.qa_history) ? uploadResponse.qa_history : []);
+    setQaError(null);
+    setQaLoading(false);
 
     setLoading(true);
     setLoadingStatus('parsing');
@@ -1211,6 +1455,50 @@ function App() {
     }
   };
 
+  const handleAskQuestion = async (questionText) => {
+    if (!reportId) {
+      throw new Error('Aktif bir rapor bulunamadı.');
+    }
+
+    setQaLoading(true);
+    setQaError(null);
+
+    try {
+      const response = await fetch(`http://localhost:8000/api/report/${reportId}/qa`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: questionText, llm_provider: llmProvider })
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const message = data?.detail || 'Soru yanıtlanamadı.';
+        throw new Error(Array.isArray(message) ? message[0]?.msg || message : message);
+      }
+
+      setQaHistory((prev) => {
+        if (Array.isArray(data?.qa_history)) {
+          return data.qa_history;
+        }
+        if (data?.qa) {
+          return [...prev, data.qa];
+        }
+        return prev;
+      });
+
+      if (data?.report_id && data.report_id !== reportId) {
+        setReportId(data.report_id);
+      }
+    } catch (err) {
+      console.error('QA request failed:', err);
+      const message = err instanceof Error ? err.message : String(err);
+      setQaError(message);
+      throw new Error(message);
+    } finally {
+      setQaLoading(false);
+    }
+  };
+
   const renderDashboard = () => (
     <>
       <header className="app-header">
@@ -1238,9 +1526,20 @@ function App() {
         {metrics && (
           <>
             <MetricsDisplay metrics={metrics} history={history} />
+            <DatasetSummary dataset={config?.dataset} />
             <TrainingCharts history={history} />
             <ConfusionMatrix metrics={metrics} />
             <AIAnalysis analysis={analysis} isLoading={loading} />
+            {reportId && (
+              <ReportAssistant
+                reportId={reportId}
+                qaHistory={qaHistory}
+                onAsk={handleAskQuestion}
+                isLoading={qaLoading}
+                error={qaError}
+                dataset={config?.dataset}
+              />
+            )}
           </>
         )}
       </main>

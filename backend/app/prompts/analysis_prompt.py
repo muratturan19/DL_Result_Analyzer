@@ -40,6 +40,9 @@ Ham metrikler:
 EĞİTİM KONFİGÜRASYONU:
 {config}
 
+VERİ SETİ ÖZETİ (görsel adetleri ve sınıf kapsamı):
+{dataset}
+
 EĞİTİM EPOCH TARİHÇESİ (results.csv'den alınan eğriler):
 {history}
 
@@ -57,8 +60,9 @@ ANALİZ TALİMATLARI:
 2. Her metrik için sapmaları sayısal olarak açıkla; ilgili artefakt satırlarını/epoch numaralarını belirt.
 3. `results.csv` ve `args.yaml` içindeki sayısal değerleri kullanarak üç temel aksiyon senaryosu çıkar (eşik ayarı, eğitim revizyonu, veri & augmentasyon planı).
 4. Her aksiyon için beklenen etkiyi yüzdelik veya mutlak sayı olarak yaz; hangi script veya config alanının değişeceğini belirt.
-5. `actions` modül checklist'ini doldururken hangi kanıta dayandığını (ör: PR eğrisi, confusion matrix) açıkça yaz.
-6. Release kararı ve risk seviyesini deploy_profile içine yerleştir; risk gerekçesi için metriklerden alıntı yap.
-7. Çıktının tamamı Türkçe ve sayısal referanslarla desteklenmiş olsun; "iyileştirin" gibi belirsiz ifadeler kullanma.
+5. Eğitim/val/test görsel adetlerini ve sınıf dağılımını değerlendir; yetersiz veri varsa aksiyonlarda mutlaka belirt.
+6. `actions` modül checklist'ini doldururken hangi kanıta dayandığını (ör: PR eğrisi, confusion matrix) açıkça yaz.
+7. Release kararı ve risk seviyesini deploy_profile içine yerleştir; risk gerekçesi için metriklerden alıntı yap.
+8. Çıktının tamamı Türkçe ve sayısal referanslarla desteklenmiş olsun; "iyileştirin" gibi belirsiz ifadeler kullanma.
 
 Tüm bu gereksinimleri takip ederek saf JSON üret ve GPT-5 schema kontrollerine uy."""

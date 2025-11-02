@@ -6,7 +6,10 @@ import logging
 import os
 from hashlib import sha256
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
+from threading import Lock
 from typing import Dict, List, Optional, Any
+from uuid import uuid4
 
 import yaml
 
@@ -40,6 +43,53 @@ app.add_middleware(
 # =============================================================================
 # MODELS
 # =============================================================================
+
+
+class ReportStore:
+    """In-memory store that keeps report contexts for follow-up Q/A."""
+
+    def __init__(self, ttl_seconds: int = 6 * 3600) -> None:
+        self._ttl = timedelta(seconds=ttl_seconds)
+        self._lock = Lock()
+        self._store: Dict[str, Dict[str, Any]] = {}
+
+    def _purge_expired(self) -> None:
+        now = datetime.now(timezone.utc)
+        expired: List[str] = []
+        for report_id, entry in self._store.items():
+            timestamp: datetime = entry.get("timestamp", now)
+            if now - timestamp > self._ttl:
+                expired.append(report_id)
+        for report_id in expired:
+            self._store.pop(report_id, None)
+
+    def save(self, payload: Dict[str, Any]) -> str:
+        report_id = uuid4().hex
+        with self._lock:
+            self._purge_expired()
+            self._store[report_id] = {
+                "payload": payload,
+                "timestamp": datetime.now(timezone.utc),
+            }
+        return report_id
+
+    def get(self, report_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            self._purge_expired()
+            entry = self._store.get(report_id)
+            if not entry:
+                return None
+            entry["timestamp"] = datetime.now(timezone.utc)
+            return entry["payload"]
+
+    def update(self, report_id: str, payload: Dict[str, Any]) -> None:
+        with self._lock:
+            self._purge_expired()
+            if report_id in self._store:
+                self._store[report_id] = {
+                    "payload": payload,
+                    "timestamp": datetime.now(timezone.utc),
+                }
 
 class YOLOMetrics(BaseModel):
     """YOLO eğitim sonuçları model"""
@@ -76,6 +126,16 @@ class AIAnalysis(BaseModel):
     deploy_profile: Dict[str, Any]
     notes: Optional[str] = None
     calibration: Optional[Dict[str, Any]] = None
+
+
+class QARequest(BaseModel):
+    """Follow-up Q/A request payload."""
+
+    question: str
+    llm_provider: Optional[str] = None
+
+
+REPORT_STORE = ReportStore()
 
 # =============================================================================
 # ENDPOINTS
@@ -267,15 +327,13 @@ async def upload_results(
             },
         }
 
-        analysis = {}
-        try:
-            # Frontend'ten gelen provider'ı kullan, fallback olarak env'den oku
-            provider = llm_provider or os.getenv("LLM_PROVIDER", "claude")
-            # Geçerli provider kontrolü
-            if provider not in ["claude", "openai"]:
-                logger.warning("Geçersiz LLM provider: %s, claude kullanılacak", provider)
-                provider = "claude"
+        provider = llm_provider or os.getenv("LLM_PROVIDER", "claude")
+        if provider not in ["claude", "openai"]:
+            logger.warning("Geçersiz LLM provider: %s, claude kullanılacak", provider)
+            provider = "claude"
 
+        analysis: Dict[str, Any] = {}
+        try:
             analyzer = LLMAnalyzer(provider=provider)  # type: ignore[arg-type]
             logger.info("LLM analizi başlatılıyor: provider=%s", provider)
             analysis = analyzer.analyze(
@@ -300,6 +358,29 @@ async def upload_results(
                 "error": str(exc),
             }
 
+        files_payload = {
+            "csv": csv_filename,
+            "yaml": yaml_path.name if yaml_path else None,
+            "graphs": saved_graphs,
+            "best_model": best_model_path.name if best_model_path else None,
+            "training_code": training_code_path.name if training_code_path else None,
+        }
+
+        report_context: Dict[str, Any] = {
+            "metrics": metrics,
+            "config": enriched_config,
+            "history": history,
+            "analysis": analysis,
+            "project": project_context,
+            "artefacts": artefacts_info,
+            "training_code": training_code_context,
+            "files": files_payload,
+            "llm_provider": provider,
+            "qa_history": [],
+        }
+
+        report_id = REPORT_STORE.save(report_context)
+
         return {
             "status": "success",
             "metrics": metrics,
@@ -308,14 +389,11 @@ async def upload_results(
             "analysis": analysis,
             "project": project_context,
             "training_code": training_code_context,
-            "files": {
-                "csv": csv_filename,
-                "yaml": yaml_path.name if yaml_path else None,
-                "graphs": saved_graphs,
-                "best_model": best_model_path.name if best_model_path else None,
-                "training_code": training_code_path.name if training_code_path else None,
-            },
+            "files": files_payload,
             "artefacts": artefacts_info,
+            "report_id": report_id,
+            "qa_history": report_context["qa_history"],
+            "llm_provider": provider,
         }
     except (FileNotFoundError, ValueError) as exc:
         logger.exception("Dosya veya veri hatası nedeniyle upload başarısız oldu")
@@ -323,6 +401,61 @@ async def upload_results(
     except Exception as exc:  # pragma: no cover - unexpected failures
         logger.exception("Beklenmeyen bir hata oluştu")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/report/{report_id}/qa")
+async def report_qa(report_id: str, payload: QARequest):
+    question = (payload.question or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Soru metni boş olamaz.")
+
+    context = REPORT_STORE.get(report_id)
+    if context is None:
+        raise HTTPException(status_code=404, detail="Rapor bulunamadı veya süresi doldu.")
+
+    provider = payload.llm_provider or context.get("llm_provider") or os.getenv("LLM_PROVIDER", "claude")
+    if provider not in ["claude", "openai"]:
+        logger.warning("Geçersiz QA provider seçimi: %s, claude kullanılacak", provider)
+        provider = "claude"
+
+    try:
+        from app.analyzers.llm_analyzer import LLMAnalyzer
+
+        analyzer = LLMAnalyzer(provider=provider)  # type: ignore[arg-type]
+        answer_payload = analyzer.answer_question(question, context)
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        logger.exception("LLM Q/A isteği başarısız oldu")
+        raise HTTPException(status_code=500, detail=f"LLM Q/A başarısız oldu: {exc}") from exc
+
+    qa_entry = {
+        "question": question,
+        "answer": answer_payload.get("answer", ""),
+        "references": answer_payload.get("references", []),
+        "follow_up_questions": answer_payload.get("follow_up_questions", []),
+        "notes": answer_payload.get("notes"),
+        "provider": provider,
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "raw": answer_payload,
+    }
+
+    history = context.get("qa_history")
+    if not isinstance(history, list):
+        history = []
+        context["qa_history"] = history
+    history.append(qa_entry)
+    context["llm_provider"] = provider
+
+    REPORT_STORE.update(report_id, context)
+
+    return {
+        "status": "success",
+        "report_id": report_id,
+        "provider": provider,
+        "qa": qa_entry,
+        "qa_history": history,
+    }
+
+
 @app.post("/api/optimize/thresholds")
 async def optimize_thresholds(
     best_model: UploadFile = File(...),

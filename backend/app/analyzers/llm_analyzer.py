@@ -14,6 +14,7 @@ from anthropic import Anthropic
 from openai import OpenAI
 
 from app.prompts.analysis_prompt import DL_ANALYSIS_PROMPT
+from app.prompts.qa_prompt import QA_PROMPT
 
 try:  # Anthropics specific error classes are optional in the runtime.
     from anthropic import APIConnectionError as AnthropicConnectionError
@@ -110,6 +111,29 @@ GPT_ANALYSIS_JSON_SCHEMA: Dict[str, Any] = {
     },
 }
 
+GPT_QA_JSON_SCHEMA: Dict[str, Any] = {
+    "name": "DLFollowUpQA",
+    "schema": {
+        "type": "object",
+        "additionalProperties": True,
+        "properties": {
+            "answer": {"type": "string"},
+            "references": {
+                "type": "array",
+                "items": {"type": "string"},
+                "default": [],
+            },
+            "follow_up_questions": {
+                "type": "array",
+                "items": {"type": "string"},
+                "default": [],
+            },
+            "notes": {"type": "string"},
+        },
+        "required": ["answer", "references", "follow_up_questions"],
+    },
+}
+
 
 class LLMAnalyzer:
     """Analyze YOLO training runs with an LLM backend."""
@@ -121,12 +145,31 @@ class LLMAnalyzer:
         self._openai_response_format_supported: Optional[bool] = None
 
         if provider == "claude":
-            api_key_present = bool(os.getenv("CLAUDE_API_KEY"))
+            api_key = os.getenv("CLAUDE_API_KEY")
+            api_key_present = bool(api_key)
             logger.info(
                 "Anthropic istemcisi oluşturuluyor (api_key_var=%s)",
                 api_key_present,
             )
-            self.client = Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
+            if api_key_present:
+                self.client = Anthropic(api_key=api_key)
+            else:
+                logger.warning("CLAUDE_API_KEY bulunamadı, stub istemci kullanılacak.")
+
+                def _raise_missing_key(*_args: Any, **_kwargs: Any) -> Any:  # pragma: no cover - stub
+                    raise RuntimeError("Claude API key is not configured.")
+
+                messages_stub = type(
+                    "MessagesStub",
+                    (),
+                    {"create": staticmethod(_raise_missing_key)},
+                )()
+
+                self.client = type(
+                    "AnthropicStub",
+                    (),
+                    {"messages": messages_stub},
+                )()
         else:
             api_key = os.getenv("OPENAI_API_KEY")
             api_key_present = bool(api_key)
@@ -350,9 +393,8 @@ class LLMAnalyzer:
         return [str(value).strip()]
 
     @staticmethod
-    def _parse_structured_output(raw_text: str) -> Dict[str, Any]:
-        """Parse the LLM response into the standardized dictionary format."""
-
+    def _extract_json_payload(raw_text: str) -> Dict[str, Any]:
+        """Extract a JSON object from an LLM response."""
         if not raw_text:
             raise ValueError("LLM response payload is empty.")
 
@@ -439,6 +481,13 @@ class LLMAnalyzer:
             logger.error("All parsing strategies failed. Response preview: %s", raw_text[:500])
             raise ValueError("Unable to parse JSON from LLM response after trying all strategies.")
 
+        return payload
+
+    @staticmethod
+    def _parse_structured_output(raw_text: str) -> Dict[str, Any]:
+        """Parse the LLM response into the standardized dictionary format."""
+
+        payload = LLMAnalyzer._extract_json_payload(raw_text)
         structured: Dict[str, Any] = {
             "summary": str(payload.get("summary", "")).strip(),
             "strengths": LLMAnalyzer._normalise_list(payload.get("strengths")),
@@ -496,6 +545,39 @@ class LLMAnalyzer:
         structured.update(extra_fields)
 
         return structured
+
+    @staticmethod
+    def _parse_qa_output(raw_text: str) -> Dict[str, Any]:
+        """Parse an LLM question-answer response into a normalized structure."""
+
+        payload = LLMAnalyzer._extract_json_payload(raw_text)
+
+        answer = str(payload.get("answer", "")).strip()
+        references = LLMAnalyzer._normalise_list(payload.get("references"))
+        follow_up = LLMAnalyzer._normalise_list(payload.get("follow_up_questions"))
+
+        notes_value = payload.get("notes")
+        notes = str(notes_value).strip() if notes_value is not None else ""
+
+        response: Dict[str, Any] = {
+            "answer": answer,
+            "references": references,
+            "follow_up_questions": follow_up,
+        }
+
+        if notes:
+            response["notes"] = notes
+
+        known_keys = {"answer", "references", "follow_up_questions", "notes"}
+        extras = {
+            key: value
+            for key, value in payload.items()
+            if key not in known_keys
+        }
+        if extras:
+            response["extra"] = extras
+
+        return response
 
     def analyze(
         self,
@@ -559,6 +641,15 @@ class LLMAnalyzer:
         metrics_json = json.dumps(metrics or {}, indent=2, ensure_ascii=False)
         config_json = json.dumps(config or {}, indent=2, ensure_ascii=False)
 
+        dataset_section = "Belirtilmedi"
+        if isinstance(config, dict):
+            dataset_info = config.get("dataset")
+            if dataset_info:
+                try:
+                    dataset_section = json.dumps(dataset_info, indent=2, ensure_ascii=False)
+                except TypeError:
+                    dataset_section = str(dataset_info)
+
         recall_percent = self._format_percentage(metrics.get("recall")) if metrics else "N/A"
         precision_percent = (
             self._format_percentage(metrics.get("precision")) if metrics else "N/A"
@@ -604,7 +695,75 @@ class LLMAnalyzer:
             training_code=training_code_text,
             history=history_json,
             artefacts=artefacts_json,
+            dataset=dataset_section,
         ).strip()
+
+    def _build_qa_prompt(self, question: str, context: Dict[str, Any]) -> str:
+        metrics_json = json.dumps(context.get("metrics") or {}, indent=2, ensure_ascii=False)
+        config_json = json.dumps(context.get("config") or {}, indent=2, ensure_ascii=False)
+        history_json = json.dumps(context.get("history") or {}, indent=2, ensure_ascii=False)
+        artefacts_json = json.dumps(context.get("artefacts") or {}, indent=2, ensure_ascii=False)
+
+        config_section = context.get("config") or {}
+        dataset_section = "Belirtilmedi"
+        if isinstance(config_section, dict):
+            dataset_info = config_section.get("dataset")
+            if dataset_info:
+                try:
+                    dataset_section = json.dumps(dataset_info, indent=2, ensure_ascii=False)
+                except TypeError:
+                    dataset_section = str(dataset_info)
+
+        training_code = context.get("training_code") or {}
+        training_code_text = "Kod paylaşılmadı."
+        if isinstance(training_code, dict) and (training_code.get("filename") or training_code.get("excerpt")):
+            filename = training_code.get("filename") or "Belirtilmedi"
+            excerpt = training_code.get("excerpt", "").strip()
+            training_code_text = f"Dosya: {filename}"
+            if excerpt:
+                training_code_text = f"{training_code_text}\n\n{excerpt}"
+
+        analysis = context.get("analysis") or {}
+        summary_text = str(analysis.get("summary", "Belirtilmedi"))
+        strengths_text = json.dumps(analysis.get("strengths") or [], indent=2, ensure_ascii=False)
+        weaknesses_text = json.dumps(analysis.get("weaknesses") or [], indent=2, ensure_ascii=False)
+        risk_text = json.dumps(analysis.get("risk") or "Belirtilmedi", ensure_ascii=False)
+        deploy_profile_text = json.dumps(analysis.get("deploy_profile") or {}, indent=2, ensure_ascii=False)
+        actions_text = json.dumps(analysis.get("actions") or [], indent=2, ensure_ascii=False)
+
+        question_text = question.strip() or "Soru belirtilmedi."
+
+        return QA_PROMPT.format(
+            summary=summary_text,
+            strengths=strengths_text,
+            weaknesses=weaknesses_text,
+            risk=risk_text,
+            deploy_profile=deploy_profile_text,
+            actions=actions_text,
+            metrics=metrics_json,
+            config=config_json,
+            dataset=dataset_section,
+            history=history_json,
+            training_code=training_code_text,
+            artefacts=artefacts_json,
+            question=question_text,
+        ).strip()
+
+    def answer_question(self, question: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        prompt = self._build_qa_prompt(question, context or {})
+        logger.debug(
+            "LLM QA prompt hazırlandı (provider=%s, uzunluk=%s karakter)",
+            self.provider,
+            len(prompt),
+        )
+
+        try:
+            if self.provider == "claude":
+                return self._qa_with_claude(prompt)
+            return self._qa_with_gpt(prompt)
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            logger.warning("LLM QA isteği başarısız oldu: %s", exc)
+            return self._fallback_answer(question, context, error=str(exc))
 
     def _analyze_with_claude(self, prompt: str) -> Dict:
         system_instruction = (
@@ -725,6 +884,206 @@ class LLMAnalyzer:
             len(raw_text),
         )
         return self._parse_structured_output(raw_text)
+
+    def _qa_with_claude(self, prompt: str) -> Dict[str, Any]:
+        system_instruction = (
+            "You are an assistant that strictly replies with ONLY a valid JSON object. "
+            "Return keys answer (string), references (array of strings), follow_up_questions (array of strings), "
+            "and optional notes. All text must be Turkish."
+        )
+
+        try:
+            response = self.client.messages.create(
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=2048,
+                temperature=0,
+                system=system_instruction,
+                messages=[{"role": "user", "content": prompt}],
+            )
+        except (TimeoutError, AnthropicConnectionError, AnthropicAPIError) as exc:  # pragma: no cover - network calls
+            logger.exception("Claude QA isteği başarısız oldu")
+            raise RuntimeError(f"Claude QA request failed: {exc}") from exc
+
+        text_chunks = []
+        for block in getattr(response, "content", []):
+            if getattr(block, "type", "") == "text":
+                text_chunks.append(getattr(block, "text", ""))
+
+        raw_text = "".join(text_chunks).strip()
+        if not raw_text and hasattr(response, "model_response"):
+            raw_text = str(getattr(response, "model_response", "")).strip()
+
+        logger.debug(
+            "Claude QA yanıtı alındı (uzunluk=%s karakter)",
+            len(raw_text),
+        )
+        return self._parse_qa_output(raw_text)
+
+    def _qa_with_gpt(self, prompt: str) -> Dict[str, Any]:
+        system_instruction = (
+            "You are an assistant that answers follow-up questions using JSON only. "
+            "The JSON must contain answer, references, follow_up_questions, and optional notes. "
+            "Every sentence must be in Turkish."
+        )
+
+        model_name = "gpt-5-thinking" if self._openai_high_reasoning else "gpt-5"
+        reasoning_effort = "high" if self._openai_high_reasoning else "medium"
+
+        try:
+            request_kwargs: Dict[str, Any] = {
+                "model": model_name,
+                "reasoning": {"effort": reasoning_effort},
+                "input": [
+                    {
+                        "role": "system",
+                        "content": [
+                            {"type": "input_text", "text": system_instruction},
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": prompt},
+                        ],
+                    },
+                ],
+            }
+
+            if self._openai_supports_temperature(model_name):
+                request_kwargs["temperature"] = 0
+
+            if self._openai_supports_response_format():
+                request_kwargs["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": GPT_QA_JSON_SCHEMA,
+                }
+
+            response = self.client.responses.create(  # type: ignore[attr-defined]
+                **request_kwargs
+            )
+        except (TimeoutError, OpenAIConnectionError, OpenAIAPIError) as exc:  # pragma: no cover - network calls
+            logger.exception("OpenAI QA isteği başarısız oldu")
+            raise RuntimeError(f"OpenAI QA request failed: {exc}") from exc
+
+        raw_text = ""
+        output_blocks = getattr(response, "output", None) or []
+        if output_blocks:
+            collected_chunks: List[str] = []
+            for output_block in output_blocks:
+                content_blocks = getattr(output_block, "content", None) or []
+                for content in content_blocks:
+                    content_type = getattr(content, "type", "")
+                    if content_type in {"output_text", "text", ""}:
+                        text_value = getattr(content, "text", "") or ""
+                        if text_value:
+                            collected_chunks.append(text_value)
+            raw_text = "".join(collected_chunks).strip()
+
+        if not raw_text and hasattr(response, "output_text"):
+            raw_text = getattr(response, "output_text", "") or ""
+
+        logger.debug(
+            "OpenAI QA yanıtı alındı (uzunluk=%s karakter)",
+            len(raw_text),
+        )
+        return self._parse_qa_output(raw_text)
+
+    def _fallback_answer(
+        self,
+        question: str,
+        context: Dict[str, Any],
+        error: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        metrics = context.get("metrics") or {}
+        config = context.get("config") or {}
+        analysis = context.get("analysis") or {}
+        dataset = {}
+        if isinstance(config, dict):
+            dataset = config.get("dataset") or {}
+
+        lines: List[str] = []
+        summary = analysis.get("summary") if isinstance(analysis, dict) else None
+        if summary:
+            lines.append(f"Önceki özet: {summary}")
+
+        metric_pairs = [
+            ("precision", "Precision"),
+            ("recall", "Recall"),
+            ("map50", "mAP@0.5"),
+            ("map50_95", "mAP@0.5:0.95"),
+        ]
+        metric_highlights: List[str] = []
+        for key, label in metric_pairs:
+            value = metrics.get(key)
+            try:
+                if value is None:
+                    continue
+                metric_highlights.append(f"{label}: {self._format_percentage(value)}%")
+            except Exception:  # pragma: no cover - defensive
+                continue
+        if metric_highlights:
+            lines.append("Metrikler → " + ", ".join(metric_highlights))
+
+        dataset_counts: List[str] = []
+        for key, label in [
+            ("train_images", "Eğitim"),
+            ("val_images", "Doğrulama"),
+            ("test_images", "Test"),
+            ("total_images", "Toplam"),
+        ]:
+            value = dataset.get(key)
+            numeric_value: Optional[int] = None
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                try:
+                    numeric_value = int(value)
+                except (TypeError, ValueError):  # pragma: no cover - defensive
+                    numeric_value = None
+            elif isinstance(value, str):
+                stripped = value.strip()
+                if stripped:
+                    try:
+                        numeric_value = int(float(stripped))
+                    except ValueError:
+                        numeric_value = None
+            if numeric_value is not None:
+                dataset_counts.append(f"{label}: {numeric_value} görsel")
+        if dataset_counts:
+            lines.append("Veri seti → " + ", ".join(dataset_counts))
+
+        class_count = dataset.get("class_count") if isinstance(dataset, dict) else None
+        if class_count:
+            lines.append(f"Sınıf sayısı: {class_count}")
+
+        if not lines:
+            lines.append("LLM yanıtı üretilemedi; temel özet bilgileri sınırlı.")
+
+        question_text = question.strip()
+        if question_text:
+            lines.append(f"Soru özetiniz: {question_text}")
+
+        if error:
+            lines.append(f"Not: LLM entegrasyonu hata verdi ({error}).")
+
+        references: List[str] = []
+        if metrics:
+            references.append("results.csv → metrik özeti")
+        if dataset_counts:
+            references.append("args.yaml → veri seti görsel adetleri")
+
+        follow_up: List[str] = []
+        if error:
+            follow_up.append("LLM API anahtarını tanımlayıp tekrar deneyin.")
+        if not dataset_counts:
+            follow_up.append("Veri seti görsel sayılarını detaylandırın.")
+
+        notes = "Bu yanıt LLM erişimi olmadığı için kural tabanlı olarak oluşturuldu."
+
+        return {
+            "answer": "\n".join(lines),
+            "references": references or ["results.csv → metrik özeti"],
+            "follow_up_questions": follow_up or ["LLM erişimi sağlandığında soruyu yeniden iletin."],
+            "notes": notes,
+        }
 
 
 __all__ = ["LLMAnalyzer"]

@@ -47,6 +47,18 @@ class TestYOLOResultParser:
         assert "iou" in config
         assert "conf" in config
 
+        dataset_info = config.get("dataset")
+        assert dataset_info is not None
+        assert dataset_info.get("train_images") == 280
+        assert dataset_info.get("val_images") == 80
+        assert dataset_info.get("test_images") == 40
+        assert dataset_info.get("total_images") == 400
+        assert dataset_info.get("class_count") == 2
+        assert dataset_info.get("train_path") == "images/train"
+        assert dataset_info.get("val_path") == "images/val"
+        assert dataset_info.get("test_path") == "images/test"
+        assert dataset_info.get("config_path") == "potluk_dataset/data.yaml"
+
         # Check expected values from sample_args.yaml
         assert config["epochs"] == 100
         assert config["batch"] == 16

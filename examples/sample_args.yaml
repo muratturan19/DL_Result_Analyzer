@@ -51,6 +51,26 @@ single_cls: false   # Train as single-class dataset
 classes:            # Class indices to train on
   - 0               # potluk
   - 1               # temiz
+data_dict:
+  path: potluk_dataset/data.yaml
+  train: images/train
+  val: images/val
+  test: images/test
+  splits:
+    train: 280
+    val: 80
+    test: 40
+  stats:
+    total_images: 400
+  names:
+    0: potluk
+    1: temiz
+dataset_info:
+  total_images: 400
+  train_images: 280
+  val_images: 80
+  test_images: 40
+  last_annotation_audit: "2025-01-10"
 
 # Save & Logging
 project: runs/detect
