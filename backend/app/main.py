@@ -46,31 +46,133 @@ app.add_middleware(
 
 
 class ReportStore:
-    """In-memory store that keeps report contexts for follow-up Q/A."""
+    """In-memory store that keeps report contexts for follow-up Q/A.
 
-    def __init__(self, ttl_seconds: int = 6 * 3600) -> None:
+    The store persists entries to disk so that freshly uploaded reports remain
+    available even if the application process reloads (for example when running
+    the development server with ``uvicorn --reload``)."""
+
+    def __init__(self, ttl_seconds: int = 6 * 3600, storage_dir: Optional[Path] = None) -> None:
         self._ttl = timedelta(seconds=ttl_seconds)
         self._lock = Lock()
+        storage_env = os.getenv("REPORT_STORAGE_DIR")
+        if storage_dir is not None:
+            self._storage_dir = Path(storage_dir)
+        elif storage_env:
+            self._storage_dir = Path(storage_env)
+        else:
+            self._storage_dir = Path(__file__).resolve().parent.parent / "reports"
+        self._storage_dir.mkdir(parents=True, exist_ok=True)
         self._store: Dict[str, Dict[str, Any]] = {}
+        self._load_existing_reports()
+
+    def _report_path(self, report_id: str) -> Path:
+        return self._storage_dir / f"{report_id}.json"
+
+    @staticmethod
+    def _coerce_timestamp(raw_value: Optional[str]) -> datetime:
+        if not raw_value:
+            return datetime.now(timezone.utc)
+        try:
+            timestamp = datetime.fromisoformat(raw_value)
+        except ValueError:
+            logger.warning("Geçersiz rapor zaman damgası: %s", raw_value)
+            return datetime.now(timezone.utc)
+        if timestamp.tzinfo is None:
+            return timestamp.replace(tzinfo=timezone.utc)
+        return timestamp.astimezone(timezone.utc)
+
+    def _load_existing_reports(self) -> None:
+        for json_path in self._storage_dir.glob("*.json"):
+            report_id = json_path.stem
+            try:
+                with json_path.open("r", encoding="utf-8") as handle:
+                    data = json.load(handle)
+                payload = data.get("payload")
+                if payload is None:
+                    raise ValueError("payload anahtarı bulunamadı")
+                timestamp = self._coerce_timestamp(data.get("timestamp"))
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("Bozuk rapor dosyası yoksayılıyor: %s (%s)", json_path, exc)
+                try:
+                    json_path.unlink()
+                except OSError:
+                    logger.debug("Rapor dosyası silinemedi: %s", json_path)
+                continue
+            self._store[report_id] = {"payload": payload, "timestamp": timestamp}
+        self._purge_expired()
+
+    def _write_entry(self, report_id: str, entry: Dict[str, Any]) -> None:
+        payload = entry.get("payload")
+        timestamp: datetime = entry.get("timestamp", datetime.now(timezone.utc))
+        data = {
+            "payload": payload,
+            "timestamp": timestamp.astimezone(timezone.utc).isoformat(),
+        }
+        json_path = self._report_path(report_id)
+        tmp_path = json_path.with_suffix(".json.tmp")
+        try:
+            with tmp_path.open("w", encoding="utf-8") as handle:
+                json.dump(data, handle, ensure_ascii=False, indent=2)
+            tmp_path.replace(json_path)
+        except Exception:
+            logger.exception("Rapor dosyası yazılırken hata oluştu: %s", json_path)
+            try:
+                tmp_path.unlink()
+            except OSError:
+                logger.debug("Geçici rapor dosyası silinemedi: %s", tmp_path)
+
+    def _delete_entry(self, report_id: str) -> None:
+        json_path = self._report_path(report_id)
+        try:
+            json_path.unlink()
+        except FileNotFoundError:
+            return
+        except OSError:
+            logger.debug("Rapor dosyası silinemedi: %s", json_path)
+
+    def _load_from_disk(self, report_id: str) -> Optional[Dict[str, Any]]:
+        json_path = self._report_path(report_id)
+        if not json_path.exists():
+            return None
+        try:
+            with json_path.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            payload = data.get("payload")
+            if payload is None:
+                raise ValueError("payload anahtarı bulunamadı")
+            timestamp = self._coerce_timestamp(data.get("timestamp"))
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Rapor dosyası okunamadı, silinecek: %s (%s)", json_path, exc)
+            self._delete_entry(report_id)
+            return None
+        entry = {"payload": payload, "timestamp": timestamp}
+        if datetime.now(timezone.utc) - timestamp > self._ttl:
+            self._delete_entry(report_id)
+            return None
+        return entry
 
     def _purge_expired(self) -> None:
         now = datetime.now(timezone.utc)
         expired: List[str] = []
-        for report_id, entry in self._store.items():
+        for report_id, entry in list(self._store.items()):
             timestamp: datetime = entry.get("timestamp", now)
             if now - timestamp > self._ttl:
                 expired.append(report_id)
         for report_id in expired:
             self._store.pop(report_id, None)
+            self._delete_entry(report_id)
 
     def save(self, payload: Dict[str, Any]) -> str:
         report_id = uuid4().hex
         with self._lock:
             self._purge_expired()
-            self._store[report_id] = {
+            entry = {
                 "payload": payload,
                 "timestamp": datetime.now(timezone.utc),
             }
+            self._store[report_id] = entry
+            self._write_entry(report_id, entry)
         return report_id
 
     def get(self, report_id: str) -> Optional[Dict[str, Any]]:
@@ -78,18 +180,23 @@ class ReportStore:
             self._purge_expired()
             entry = self._store.get(report_id)
             if not entry:
-                return None
+                entry = self._load_from_disk(report_id)
+                if not entry:
+                    return None
+                self._store[report_id] = entry
             entry["timestamp"] = datetime.now(timezone.utc)
+            self._write_entry(report_id, entry)
             return entry["payload"]
 
     def update(self, report_id: str, payload: Dict[str, Any]) -> None:
         with self._lock:
             self._purge_expired()
-            if report_id in self._store:
-                self._store[report_id] = {
-                    "payload": payload,
-                    "timestamp": datetime.now(timezone.utc),
-                }
+            entry = {
+                "payload": payload,
+                "timestamp": datetime.now(timezone.utc),
+            }
+            self._store[report_id] = entry
+            self._write_entry(report_id, entry)
 
 class YOLOMetrics(BaseModel):
     """YOLO eğitim sonuçları model"""
