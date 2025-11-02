@@ -8,12 +8,44 @@ Derin öğrenme modeli sonuçlarını analiz etmek için tasarlanmış güçlü 
 - 🤖 **AI-powered analiz** (Claude & GPT entegrasyonu)
 - 📊 **Otomatik metric extraction** ve görselleştirme
 - 🎯 **Aksiyon önerileri** (IoU, LR, augmentation vb.)
+- 🗃️ **Veri seti özeti** (args.yaml'dan eğitim/val/test görsel adetleri ve sınıf isimleri)
+- 💬 **Rapor sonrası Q/A** (oluşturulan rapor üzerinden LLM'e soru sor)
 - 🔄 **Farklı eğitimleri karşılaştır**
 - 📄 **PDF/HTML rapor export**
 
 ---
 
 ## 🚀 Hızlı Başlangıç
+
+### Veri Seti Özeti & Rapor Asistanı
+
+- Upload sonrasında arayüzde **Veri Seti Özeti** kartı, args.yaml içindeki `data_dict`/`dataset_info` alanlarını parse ederek eğitim/val/test görsel sayılarını ve sınıf isimlerini gösterir.
+- Backend tarafında bu bilgiler `config.dataset` alanına eklenir; LLM prompt'u da bu sayıları değerlendirmeye zorlar.
+- Aynı yükleme işlemiyle birlikte benzersiz bir `report_id` üretilir. Frontend'deki **Rapor Asistanı** paneli bu ID'yi kullanarak raporla ilgili ek soruları LLM'e iletir.
+- API üzerinden soru sormak için:
+
+```bash
+curl -X POST "http://localhost:8000/api/report/<REPORT_ID>/qa" \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Eğitimde kaç görsel var?", "llm_provider": "claude"}'
+```
+
+Yanıt yapısı:
+
+```json
+{
+  "status": "success",
+  "report_id": "...",
+  "qa": {
+    "question": "...",
+    "answer": "...",
+    "references": ["results.csv → metrik özeti"],
+    "follow_up_questions": ["..."]
+  }
+}
+```
+
+LLM erişimi yoksa backend kurallı bir yanıt üretir ve referansları yine paylaşır.
 
 ### 1. Proje Kurulumu
 

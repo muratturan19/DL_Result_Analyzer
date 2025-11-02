@@ -1252,3 +1252,241 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+.dataset-summary-card {
+  background: var(--card-bg);
+  border-radius: 16px;
+  padding: 1.75rem;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+  border: 1px solid rgba(15, 23, 42, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.dataset-summary-card h3 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.dataset-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1rem;
+}
+
+.dataset-count {
+  background: rgba(79, 70, 229, 0.06);
+  border: 1px solid rgba(79, 70, 229, 0.12);
+  border-radius: 12px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.dataset-count-label {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dataset-count-value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.dataset-count-unit {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.dataset-summary-meta {
+  display: grid;
+  gap: 1rem;
+}
+
+.dataset-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.dataset-meta-label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.dataset-meta-value {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.dataset-path-value {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.9rem;
+  word-break: break-all;
+}
+
+.dataset-class-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.dataset-class-chip {
+  background: rgba(16, 185, 129, 0.12);
+  color: #047857;
+  padding: 0.35rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.qa-card {
+  background: var(--card-bg);
+  border-radius: 16px;
+  padding: 1.75rem;
+  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.08);
+  border: 1px solid rgba(15, 23, 42, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.qa-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.qa-card-header h2 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+.qa-report-id {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  background: rgba(79, 70, 229, 0.08);
+  padding: 0.35rem 0.65rem;
+  border-radius: 8px;
+}
+
+.qa-dataset-callout {
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.18);
+  border-radius: 12px;
+  padding: 0.85rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.qa-dataset-label {
+  font-weight: 600;
+  color: #1d4ed8;
+}
+
+.qa-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.qa-form textarea {
+  border-radius: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  padding: 0.9rem 1rem;
+  font-size: 1rem;
+  resize: vertical;
+  min-height: 90px;
+}
+
+.qa-form-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.qa-error {
+  background: rgba(239, 68, 68, 0.12);
+  color: #b91c1c;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+  font-size: 0.95rem;
+}
+
+.qa-history {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.qa-entry {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  padding: 1.2rem 1.4rem;
+  background: rgba(15, 23, 42, 0.02);
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.qa-entry-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.qa-entry-index {
+  font-weight: 600;
+  color: var(--primary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.qa-entry-timestamp {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.qa-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.qa-section-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.qa-question p,
+.qa-answer p,
+.qa-section p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.qa-section ul {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: var(--text);
+}
+
+.qa-empty {
+  margin: 0;
+  color: var(--text-secondary);
+  font-style: italic;
+}

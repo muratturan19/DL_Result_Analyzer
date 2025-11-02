@@ -79,3 +79,49 @@ class TestAPI:
         data = response.json()
         assert "runs" in data
         assert isinstance(data["runs"], list)
+
+    def test_report_qa_requires_existing_report(self, client):
+        """QA endpoint should return 404 for unknown report IDs."""
+        response = client.post(
+            "/api/report/nonexistent/qa",
+            json={"question": "Test"},
+        )
+        assert response.status_code == 404
+
+    def test_report_qa_success(
+        self,
+        client,
+        sample_csv_path,
+        sample_yaml_path,
+    ):
+        """Uploading results should allow follow-up Q/A queries."""
+
+        with sample_csv_path.open("rb") as csv_file, sample_yaml_path.open("rb") as yaml_file:
+            files = [
+                ("results_csv", ("sample_results.csv", csv_file, "text/csv")),
+                ("config_yaml", ("sample_args.yaml", yaml_file, "application/x-yaml")),
+            ]
+            upload_response = client.post("/api/upload/results", files=files)
+
+        assert upload_response.status_code == 200
+        upload_data = upload_response.json()
+        report_id = upload_data.get("report_id")
+        assert report_id
+
+        dataset_info = upload_data.get("config", {}).get("dataset", {})
+        assert dataset_info.get("train_images") == 280
+
+        qa_response = client.post(
+            f"/api/report/{report_id}/qa",
+            json={"question": "Eğitim setindeki görsel sayısı nedir?"},
+        )
+        assert qa_response.status_code == 200
+
+        qa_data = qa_response.json()
+        assert qa_data.get("report_id") == report_id
+        assert qa_data.get("qa", {}).get("question") == "Eğitim setindeki görsel sayısı nedir?"
+        answer_text = qa_data.get("qa", {}).get("answer", "")
+        assert "280" in answer_text
+        references = qa_data.get("qa", {}).get("references", [])
+        assert isinstance(references, list)
+        assert references
