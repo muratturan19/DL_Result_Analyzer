@@ -13,6 +13,7 @@ from typing import Dict, Iterable, List
 
 import yaml
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from ultralytics import YOLO
 
 logger = logging.getLogger(__name__)
@@ -272,12 +273,13 @@ async def optimize_thresholds(
         await _write_upload_to_path(data_yaml, data_path)
 
         try:
-            model = YOLO(str(model_path))
+            model = await run_in_threadpool(YOLO, str(model_path))
         except Exception as exc:  # pragma: no cover - Ultralytics specific errors
             logger.exception("Model yüklenemedi: %s", model_path)
             raise HTTPException(status_code=400, detail=f"Model yüklenemedi: {exc}") from exc
 
-        heatmap_rows, flat_results = _run_grid_search(
+        heatmap_rows, flat_results = await run_in_threadpool(
+            _run_grid_search,
             model,
             data_path,
             split=split,
