@@ -312,8 +312,17 @@ async def optimize_thresholds(
 
     with TemporaryDirectory(prefix="threshold_opt_") as tmp_dir:
         tmp_path = Path(tmp_dir)
-        model_filename = Path(best_model.filename or best_model_filename or "best.pt").name
-        data_filename = Path(data_yaml.filename or data_yaml_filename or "data.yaml").name
+        if best_model is not None:
+            model_filename_raw = best_model.filename
+        else:
+            model_filename_raw = best_model_filename
+        model_filename = Path(model_filename_raw or "best.pt").name
+
+        if data_yaml is not None:
+            data_filename_raw = data_yaml.filename
+        else:
+            data_filename_raw = data_yaml_filename
+        data_filename = Path(data_filename_raw or "data.yaml").name
 
         model_path = tmp_path / model_filename
         data_path = tmp_path / data_filename
