@@ -31,9 +31,14 @@ ARTEFAKT DURUMU:
 KULLANICI SORUSU:
 {question}
 
+YANIT ÖLÇÜTLERİN:
+1. Dili sade ve günlük tut; teknik terimleri ilk geçtiğinde parantez içinde açıkla.
+2. Yanıtının sonunda kullanıcıya ne yapması gerektiğini yalın bir cümleyle özetle.
+3. Gereksiz jargon ve kısaltmalardan kaçın.
+
 YANIT FORMATIN:
 {{
-  "answer": "Soruya verilen kapsamlı yanıt. Somut sayılar kullan ve varsayımlarını belirt.",
+  "answer": "Soruya verilen kapsamlı yanıt. Somut sayılar kullan ve varsayımlarını belirt. Her paragrafta sade, anlaşılır cümleler kur.",
   "references": ["Hangi artefakt satırları veya dosyalarına referans verdiğini açıkça yaz."],
   "follow_up_questions": ["Gerekirse sonraki adım için önerdiğin sorular."],
   "notes": "Opsiyonel ek açıklamalar."

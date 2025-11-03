@@ -64,5 +64,7 @@ ANALİZ TALİMATLARI:
 6. `actions` modül checklist'ini doldururken hangi kanıta dayandığını (ör: PR eğrisi, confusion matrix) açıkça yaz.
 7. Release kararı ve risk seviyesini deploy_profile içine yerleştir; risk gerekçesi için metriklerden alıntı yap.
 8. Çıktının tamamı Türkçe ve sayısal referanslarla desteklenmiş olsun; "iyileştirin" gibi belirsiz ifadeler kullanma.
+9. Dili sade, gündelik tut. Teknik kısaltmaları ilk geçtiğinde parantez içinde aç ve kararları herkesin anlayacağı cümlelerle yaz (ör. "GA" yerine "genel yayın" de).
+10. Her aksiyonun gerekçesini bir cümleyle özetleyip hangi sorunu çözdüğünü açık söyle; abartılı jargon ve emir kipinden kaçın.
 
 Tüm bu gereksinimleri takip ederek saf JSON üret ve GPT-5 schema kontrollerine uy."""
