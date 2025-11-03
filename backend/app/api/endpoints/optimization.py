@@ -6,7 +6,6 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import ntpath
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -346,7 +345,8 @@ async def optimize_thresholds(
 
         if data_yaml is not None:
             await _write_upload_to_path(data_yaml, data_path)
-            data_base_dir = data_path.parent
+            # Use current working directory as base for resolving relative paths in uploaded YAML
+            data_base_dir = Path.cwd()
         else:
             existing_yaml = _resolve_existing_file(
                 Path("uploads"),
@@ -354,6 +354,7 @@ async def optimize_thresholds(
                 description="data.yaml",
             )
             shutil.copy2(existing_yaml, data_path)
+            # Use the existing YAML's parent directory for resolving relative paths
             data_base_dir = existing_yaml.parent
 
         _prepare_data_yaml_for_inference(data_path, base_dir=data_base_dir)
@@ -399,9 +400,10 @@ def _is_absolute_path(path_value: str) -> bool:
 
     if not path_value:
         return False
-    if Path(path_value).is_absolute():
-        return True
-    return ntpath.isabs(path_value)
+
+    # Use Path.is_absolute() which respects the current OS
+    # This prevents Windows paths from being treated as absolute on Linux
+    return Path(path_value).is_absolute()
 
 
 def _load_data_yaml(path: Path) -> Dict[str, Any]:
