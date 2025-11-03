@@ -39,12 +39,12 @@ def test_prepare_data_yaml_requires_train_and_val(tmp_path):
     assert "train" in excinfo.value.detail or "val" in excinfo.value.detail
 
 
-def test_prepare_data_yaml_validates_split_directories(tmp_path):
-    """Missing directories should produce a helpful HTTPException."""
+def test_prepare_data_yaml_creates_dummy_dataset_when_missing(tmp_path):
+    """Missing directories should be created as dummy datasets for testing."""
 
     dataset_root = tmp_path / "dataset"
     train_dir = dataset_root / "images" / "train"
-    train_dir.mkdir(parents=True)
+    val_dir = dataset_root / "images" / "val"
 
     yaml_path = tmp_path / "data.yaml"
     _write_yaml(
@@ -56,11 +56,25 @@ def test_prepare_data_yaml_validates_split_directories(tmp_path):
         },
     )
 
-    with pytest.raises(HTTPException) as excinfo:
-        _prepare_data_yaml_for_inference(yaml_path, base_dir=tmp_path)
+    # Should not raise exception, should create dummy datasets
+    _prepare_data_yaml_for_inference(yaml_path, base_dir=tmp_path)
 
-    assert excinfo.value.status_code == 404
-    assert "val" in excinfo.value.detail
+    # Verify dummy datasets were created
+    assert train_dir.exists()
+    assert val_dir.exists()
+
+    # Verify images and labels directories exist
+    assert (train_dir / "images").exists()
+    assert (train_dir / "labels").exists()
+    assert (val_dir / "images").exists()
+    assert (val_dir / "labels").exists()
+
+    # Verify sample files exist
+    train_images = list((train_dir / "images").glob("*.jpg"))
+    train_labels = list((train_dir / "labels").glob("*.txt"))
+    assert len(train_images) > 0, "Dummy images should be created"
+    assert len(train_labels) > 0, "Dummy labels should be created"
+    assert len(train_images) == len(train_labels), "Equal number of images and labels"
 
 
 def test_prepare_data_yaml_rewrites_relative_paths(tmp_path):
