@@ -689,9 +689,14 @@ def _prepare_data_yaml_for_inference(
         if content.get("path") != str(override_path):
             content["path"] = str(override_path)
             updated = True
-    elif isinstance(content.get("path"), str) and content["path"].strip() and not _is_absolute_path(content["path"].strip()):
-        content["path"] = str(dataset_root)
-        updated = True
+    elif isinstance(content.get("path"), str) and content["path"].strip():
+        path_stripped = content["path"].strip()
+        is_windows_path = _WINDOWS_DRIVE_PATTERN.match(path_stripped) or _WINDOWS_UNC_PATTERN.match(path_stripped)
+        should_update = not _is_absolute_path(path_stripped) or is_windows_path or str(dataset_root) != path_stripped
+
+        if should_update:
+            content["path"] = str(dataset_root)
+            updated = True
 
     for split in ("train", "val", "test"):
         raw_value = content.get(split)
@@ -703,7 +708,12 @@ def _prepare_data_yaml_for_inference(
             missing_directories.append(f"{split}: {candidate}")
             continue
 
-        if not _is_absolute_path(raw_value.strip()):
+        # Update content if path is relative OR if it's a Windows path that we've resolved differently
+        raw_stripped = raw_value.strip()
+        is_windows_path = _WINDOWS_DRIVE_PATTERN.match(raw_stripped) or _WINDOWS_UNC_PATTERN.match(raw_stripped)
+        should_update = not _is_absolute_path(raw_stripped) or is_windows_path or str(candidate) != raw_stripped
+
+        if should_update:
             content[split] = str(candidate)
             updated = True
 
