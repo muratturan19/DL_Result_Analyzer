@@ -462,8 +462,6 @@ def _resolve_split_directory(split_value: str, dataset_root: Path) -> Path:
         return Path(split_str)
 
     candidate = Path(split_str)
-    if _is_absolute_path(str(dataset_root)):
-        return dataset_root / candidate
     return (dataset_root / candidate).resolve()
 
 
