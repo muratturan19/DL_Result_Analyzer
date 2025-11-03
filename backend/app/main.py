@@ -8,6 +8,7 @@ from html import escape
 from io import BytesIO
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from string import Template
 from textwrap import wrap
 from threading import Lock
 from typing import Dict, List, Optional, Any
@@ -24,6 +25,9 @@ from dotenv import load_dotenv
 from app.api.endpoints.optimization import router as optimization_router
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
+from reportlab.lib.fonts import addMapping
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
 load_dotenv()
@@ -36,6 +40,36 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 MAX_TRAINING_CODE_CHARS = int(os.getenv("TRAINING_CODE_PREVIEW_CHARS", "4000"))
+
+PDF_FONT_REGULAR = "Helvetica"
+PDF_FONT_BOLD = "Helvetica-Bold"
+
+_FONT_DIR = Path(__file__).resolve().parent / "static" / "fonts"
+
+try:
+    regular_path = _FONT_DIR / "DejaVuSans.ttf"
+    bold_path = _FONT_DIR / "DejaVuSans-Bold.ttf"
+
+    if regular_path.exists():
+        pdfmetrics.registerFont(TTFont("DejaVuSans", str(regular_path)))
+        PDF_FONT_REGULAR = "DejaVuSans"
+
+    if bold_path.exists():
+        pdfmetrics.registerFont(TTFont("DejaVuSans-Bold", str(bold_path)))
+        PDF_FONT_BOLD = "DejaVuSans-Bold"
+
+    if PDF_FONT_REGULAR == "DejaVuSans":
+        addMapping("DejaVuSans", 0, 0, PDF_FONT_REGULAR)
+        addMapping("DejaVuSans", 0, 1, PDF_FONT_BOLD)
+        addMapping("DejaVuSans", 1, 0, PDF_FONT_REGULAR)
+        addMapping("DejaVuSans", 1, 1, PDF_FONT_BOLD)
+except Exception:  # pragma: no cover - defensive
+    logger.warning(
+        "Türkçe karakter destekli PDF fontu yüklenemedi, varsayılan fontlar kullanılacak.",
+        exc_info=True,
+    )
+    PDF_FONT_REGULAR = "Helvetica"
+    PDF_FONT_BOLD = "Helvetica-Bold"
 
 app = FastAPI(title="DL_Result_Analyzer", version="1.0.0")
 
@@ -367,6 +401,8 @@ def _build_dataset_summary(dataset: Dict[str, Any]) -> str:
 def _generate_html_report(report_id: str, context: Dict[str, Any]) -> str:
     project_context = context.get("project") or context.get("config", {}).get("project_context", {}) or {}
     project_name = project_context.get("project_name") or "DL Result Report"
+    project_name_html = escape(str(project_name))
+    report_id_html = escape(report_id)
     generated_at = datetime.now(timezone.utc).astimezone().strftime("%d %B %Y %H:%M")
 
     metrics_section = _build_metrics_html(context.get("metrics", {}))
@@ -404,11 +440,46 @@ def _generate_html_report(report_id: str, context: Dict[str, Any]) -> str:
     notes = analysis.get("notes") or analysis.get("error")
     notes_html = escape(str(notes)) if notes else ""
 
-    return """
-<!DOCTYPE html>
-<html lang="tr">
+    dataset_section_html = (
+        f"""
+        <section>
+            <h2>🗂️ Veri Seti Özeti</h2>
+            {dataset_section}
+        </section>
+        """
+        if dataset_section
+        else ""
+    )
+
+    analysis_lists_html = f"""
+            <div class=\"analysis-grid\">
+                <div>
+                    <h3>Güçlü Yönler</h3>
+                    {strengths_html}
+                </div>
+                <div>
+                    <h3>Zayıf Yönler</h3>
+                    {weaknesses_html}
+                </div>
+            </div>
+    """
+
+    notes_block = (
+        f"""
+            <div>
+                <h3>📝 Notlar</h3>
+                <p>{notes_html}</p>
+            </div>
+        """
+        if notes_html
+        else ""
+    )
+
+    template = Template(
+        """<!DOCTYPE html>
+<html lang=\"tr\">
 <head>
-    <meta charset="utf-8" />
+    <meta charset=\"utf-8\" />
     <title>DL Result Analyzer - Rapor</title>
     <style>
         body { font-family: 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; background: #f3f4f6; color: #111827; }
@@ -443,43 +514,59 @@ def _generate_html_report(report_id: str, context: Dict[str, Any]) -> str:
 </head>
 <body>
     <header>
-        <h1>{project_name}</h1>
-        <p>Rapor ID: {report_id} • Oluşturulma: {generated_at}</p>
+        <h1>$project_name</h1>
+        <p>Rapor ID: $report_id • Oluşturulma: $generated_at</p>
     </header>
     <main>
         <section>
             <h2>📊 Metrik Özeti</h2>
             <table>
                 <tbody>
-                    {metrics_section}
+                    $metrics_section
                 </tbody>
             </table>
         </section>
-        {('<section><h2>🗂️ Veri Seti Özeti</h2>' + dataset_section + '</section>') if dataset_section else ''}
+        $dataset_section
         <section>
             <h2>🤖 AI Analizi</h2>
-            <div class="risk-chip">Risk: {risk_display}</div>
-            <p>{summary_text}</p>
-            {'<div class="analysis-grid"><div><h3>Güçlü Yönler</h3>' + strengths_html + '</div><div><h3>Zayıf Yönler</h3>' + weaknesses_html + '</div></div>'}
+            <div class=\"risk-chip\">Risk: $risk_display</div>
+            <p>$summary_text</p>
+            $analysis_lists
             <div>
                 <h3>🎯 Aksiyon Önerileri</h3>
-                {actions_html}
+                $actions_html
             </div>
             <div>
                 <h3>🚀 Yayın Profili</h3>
-                {deploy_html}
+                $deploy_html
             </div>
-            {('<div><h3>📝 Notlar</h3><p>' + notes_html + '</p></div>') if notes_html else ''}
+            $notes_block
         </section>
         <section>
             <h2>💬 Son Sorular</h2>
-            {qa_history_html}
+            $qa_history_html
         </section>
     </main>
-    <footer>DL_Result_Analyzer • {generated_at}</footer>
+    <footer>DL_Result_Analyzer • $generated_at</footer>
 </body>
 </html>
 """
+    )
+
+    return template.substitute(
+        project_name=project_name_html,
+        report_id=report_id_html,
+        generated_at=generated_at,
+        metrics_section=metrics_section,
+        dataset_section=dataset_section_html,
+        risk_display=risk_display,
+        summary_text=summary_text,
+        analysis_lists=analysis_lists_html,
+        actions_html=actions_html,
+        deploy_html=deploy_html,
+        notes_block=notes_block,
+        qa_history_html=qa_history_html,
+    )
 
 
 def _generate_pdf_report(report_id: str, context: Dict[str, Any]) -> bytes:
@@ -502,17 +589,17 @@ def _generate_pdf_report(report_id: str, context: Dict[str, Any]) -> bytes:
         nonlocal y_position
         if y_position - lines * leading < margin:
             pdf.showPage()
-            pdf.setFont("Helvetica", 11)
+            pdf.setFont(PDF_FONT_REGULAR, 11)
             y_position = page_height - margin
 
-    def write_line(text: str = "", font: str = "Helvetica", size: int = 11, leading: float = 14.0) -> None:
+    def write_line(text: str = "", font: str = PDF_FONT_REGULAR, size: int = 11, leading: float = 14.0) -> None:
         nonlocal y_position
         ensure_space(1, leading)
         pdf.setFont(font, size)
         pdf.drawString(margin, y_position, text)
         y_position -= leading
 
-    def write_paragraph(text: str, font: str = "Helvetica", size: int = 11, leading: float = 14.0) -> None:
+    def write_paragraph(text: str, font: str = PDF_FONT_REGULAR, size: int = 11, leading: float = 14.0) -> None:
         nonlocal y_position
         if not text:
             return
@@ -527,7 +614,7 @@ def _generate_pdf_report(report_id: str, context: Dict[str, Any]) -> bytes:
     def write_heading(text: str, level: int = 1) -> None:
         size = 18 if level == 1 else 14
         leading = 22 if level == 1 else 18
-        write_line(text, font="Helvetica-Bold", size=size, leading=leading)
+        write_line(text, font=PDF_FONT_BOLD, size=size, leading=leading)
 
     def write_bullet(text: str) -> None:
         nonlocal y_position
@@ -535,7 +622,7 @@ def _generate_pdf_report(report_id: str, context: Dict[str, Any]) -> bytes:
         ensure_space(len(lines))
         for idx, line in enumerate(lines):
             prefix = "• " if idx == 0 else "  "
-            pdf.setFont("Helvetica", 11)
+            pdf.setFont(PDF_FONT_REGULAR, 11)
             pdf.drawString(margin + (0 if idx == 0 else 10), y_position, prefix + line)
             y_position -= 14
         y_position -= 4
@@ -595,19 +682,19 @@ def _generate_pdf_report(report_id: str, context: Dict[str, Any]) -> bytes:
 
         strengths = analysis.get("strengths") or []
         if strengths:
-            write_line("Güçlü Yönler", font="Helvetica-Bold", size=12)
+            write_line("Güçlü Yönler", font=PDF_FONT_BOLD, size=12)
             for item in strengths:
                 write_bullet(str(item))
 
         weaknesses = analysis.get("weaknesses") or []
         if weaknesses:
-            write_line("Zayıf Yönler", font="Helvetica-Bold", size=12)
+            write_line("Zayıf Yönler", font=PDF_FONT_BOLD, size=12)
             for item in weaknesses:
                 write_bullet(str(item))
 
         actions = analysis.get("actions") or []
         if actions:
-            write_line("Aksiyon Önerileri", font="Helvetica-Bold", size=12)
+            write_line("Aksiyon Önerileri", font=PDF_FONT_BOLD, size=12)
             for action in actions:
                 parts = []
                 module = action.get("module")
@@ -634,7 +721,7 @@ def _generate_pdf_report(report_id: str, context: Dict[str, Any]) -> bytes:
 
         deploy_profile = analysis.get("deploy_profile") or {}
         if deploy_profile:
-            write_line("Yayın Profili", font="Helvetica-Bold", size=12)
+            write_line("Yayın Profili", font=PDF_FONT_BOLD, size=12)
             for key, value in deploy_profile.items():
                 write_paragraph(f"{key}: {value}")
 
