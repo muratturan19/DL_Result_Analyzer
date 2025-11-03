@@ -883,15 +883,17 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
           </div>
 
           <div className="dataset-root-input">
-            <label>Veri seti kök klasörü (opsiyonel)</label>
+            <label>Veri seti kök klasörü</label>
             <input
               type="text"
-              placeholder="Örn. E:\\DELTA\\FKT\\Training_Results\\boxing_model_final_package\\Dataset"
+              placeholder={dataSource ? "data.yaml dosyasının bulunduğu klasörü girin" : "Önce data.yaml dosyası seçin"}
               value={datasetRoot}
               onChange={(e) => setDatasetRoot(e.target.value)}
             />
             <span className="input-hint">
-              Göreli path'ler bu klasöre göre çözümlenir. Windows dizinleri için \ veya / kullanabilirsiniz.
+              {dataSource
+                ? "📁 Seçtiğiniz data.yaml dosyasının bulunduğu tam klasör yolunu girin. Örn: C:\\Projeler\\ModelEgitimi veya /home/user/datasets/boxing"
+                : "⚠️ Önce yukarıdan data.yaml dosyasını seçin, sonra o dosyanın bulunduğu klasörü buraya yazın."}
             </span>
           </div>
 

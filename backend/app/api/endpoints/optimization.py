@@ -661,12 +661,25 @@ def _prepare_data_yaml_for_inference(
         if not override_candidate.is_dir():
             raise HTTPException(
                 status_code=404,
-                detail=f"Veri seti kök klasörü bulunamadı: {override_candidate}",
+                detail=f"Belirtilen veri seti kök klasörü bulunamadı: {override_candidate}. Lütfen data.yaml dosyasının bulunduğu klasörün tam yolunu girin.",
             )
         dataset_root = override_candidate
         override_path = override_candidate
     else:
+        # Try to resolve from data.yaml content
         dataset_root = _resolve_dataset_root(content, base_dir=base_dir)
+
+        # Check if the resolved path contains Windows-style paths that couldn't be resolved
+        raw_path = content.get("path", "")
+        if isinstance(raw_path, str) and (_WINDOWS_DRIVE_PATTERN.match(raw_path) or _WINDOWS_UNC_PATTERN.match(raw_path)):
+            if not dataset_root.is_dir():
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"data.yaml içindeki path Windows formatında ({raw_path}) ve otomatik çözümlenemedi. "
+                        "Lütfen 'Veri seti kök klasörü' alanına data.yaml dosyasının bulunduğu klasörün tam yolunu girin."
+                    ),
+                )
 
     dataset_root = dataset_root.expanduser()
     updated = False
