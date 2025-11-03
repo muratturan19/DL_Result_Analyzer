@@ -626,7 +626,7 @@ def _resolve_split_directory(split_value: str, dataset_root: Path) -> Path:
                 split_name = match.group(1)
                 if split_name.lower() == 'valid':
                     split_name = 'val'
-                candidate = Path(f"images/{split_name}")
+                candidate = Path(f"{split_name}/images")
                 return (dataset_root / candidate).resolve()
         # For other absolute paths that don't exist, treat as relative
         candidate = Path(split_str).name if split_str else Path(split_str)
@@ -698,10 +698,15 @@ def _prepare_data_yaml_for_inference(
             content["path"] = str(dataset_root)
             updated = True
 
+    has_windows_paths = False
     for split in ("train", "val", "test"):
         raw_value = content.get(split)
         if not isinstance(raw_value, str) or not raw_value.strip():
             continue
+
+        raw_stripped = raw_value.strip()
+        if _WINDOWS_DRIVE_PATTERN.match(raw_stripped) or _WINDOWS_UNC_PATTERN.match(raw_stripped):
+            has_windows_paths = True
 
         candidate = _resolve_split_directory(raw_value, dataset_root).expanduser()
         if not candidate.is_dir():
@@ -709,7 +714,6 @@ def _prepare_data_yaml_for_inference(
             continue
 
         # Update content if path is relative OR if it's a Windows path that we've resolved differently
-        raw_stripped = raw_value.strip()
         is_windows_path = _WINDOWS_DRIVE_PATTERN.match(raw_stripped) or _WINDOWS_UNC_PATTERN.match(raw_stripped)
         should_update = not _is_absolute_path(raw_stripped) or is_windows_path or str(candidate) != raw_stripped
 
@@ -719,7 +723,10 @@ def _prepare_data_yaml_for_inference(
 
     if missing_directories:
         formatted = ", ".join(missing_directories)
-        raise HTTPException(status_code=404, detail=f"Veri seti klasörleri bulunamadı: {formatted}")
+        error_msg = f"Veri seti klasörleri bulunamadı: {formatted}"
+        if has_windows_paths and not override_path:
+            error_msg += "\n\ndata.yaml dosyanızda Windows yolları (E:\\...) kullanılmış. Bu yollar Linux sisteminde bulunamadı. Lütfen 'Veri seti kök klasörü' alanına veri setinizin bulunduğu klasörün tam yolunu girin (data.yaml dosyasının bulunduğu klasör)."
+        raise HTTPException(status_code=404, detail=error_msg)
 
     if updated:
         data_yaml_path.write_text(yaml.safe_dump(content, sort_keys=False, allow_unicode=True), encoding="utf-8")
