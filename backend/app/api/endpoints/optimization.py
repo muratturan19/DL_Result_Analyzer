@@ -591,7 +591,19 @@ def _resolve_dataset_root(content: Dict[str, Any], *, base_dir: Path) -> Path:
     if isinstance(raw_root, str) and raw_root.strip():
         root_value = raw_root.strip()
         if _is_absolute_path(root_value):
-            return Path(root_value)
+            absolute_candidate = Path(root_value)
+            # If absolute path exists, use it
+            if absolute_candidate.expanduser().exists():
+                return absolute_candidate
+            # If it's a Windows path on a non-Windows system, treat as relative to base_dir
+            if _WINDOWS_DRIVE_PATTERN.match(root_value) or _WINDOWS_UNC_PATTERN.match(root_value):
+                # Try to find dataset directory in the path
+                match = re.search(r'[\\/]([^\\/]+)[\\/]dataset', root_value, re.IGNORECASE)
+                if match:
+                    # Use just "dataset" as relative path
+                    return (base_dir / "dataset").resolve()
+            # For other absolute paths that don't exist, use base_dir
+            return base_dir.resolve()
         return (base_dir / root_value).resolve()
     return base_dir.resolve()
 
@@ -601,7 +613,24 @@ def _resolve_split_directory(split_value: str, dataset_root: Path) -> Path:
 
     split_str = split_value.strip()
     if _is_absolute_path(split_str):
-        return Path(split_str)
+        absolute_candidate = Path(split_str)
+        # If absolute path exists, use it
+        if absolute_candidate.expanduser().exists():
+            return absolute_candidate
+        # If it's a Windows path on a non-Windows system, treat as relative
+        if _WINDOWS_DRIVE_PATTERN.match(split_str) or _WINDOWS_UNC_PATTERN.match(split_str):
+            # Extract the relative portion after the drive letter (e.g., "train\images" from "E:\content\...\train\images")
+            # Try to extract just the split name (train/val/test) and images folder
+            match = re.search(r'[\\/](train|val|valid|test)[\\/]images?$', split_str, re.IGNORECASE)
+            if match:
+                split_name = match.group(1)
+                if split_name.lower() == 'valid':
+                    split_name = 'val'
+                candidate = Path(f"images/{split_name}")
+                return (dataset_root / candidate).resolve()
+        # For other absolute paths that don't exist, treat as relative
+        candidate = Path(split_str).name if split_str else Path(split_str)
+        return (dataset_root / candidate).resolve()
 
     candidate = Path(split_str)
     return (dataset_root / candidate).resolve()
