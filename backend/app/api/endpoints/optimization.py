@@ -6,16 +6,20 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import ntpath
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 import yaml
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from ultralytics import YOLO
+try:  # pragma: no cover - optional dependency for tests
+    from ultralytics import YOLO
+except ModuleNotFoundError:  # pragma: no cover - fallback when Ultralytics is absent
+    YOLO = None
 
 logger = logging.getLogger(__name__)
 
@@ -288,6 +292,9 @@ async def optimize_thresholds(
 ):
     """Optimize IoU and confidence thresholds via grid search."""
 
+    if YOLO is None:
+        raise HTTPException(status_code=500, detail="Ultralytics modülü yüklü değil.")
+
     if split not in _ALLOWED_SPLITS:
         raise HTTPException(status_code=400, detail=f"Geçersiz split: {split}.")
 
@@ -339,6 +346,7 @@ async def optimize_thresholds(
 
         if data_yaml is not None:
             await _write_upload_to_path(data_yaml, data_path)
+            data_base_dir = data_path.parent
         else:
             existing_yaml = _resolve_existing_file(
                 Path("uploads"),
@@ -346,6 +354,9 @@ async def optimize_thresholds(
                 description="data.yaml",
             )
             shutil.copy2(existing_yaml, data_path)
+            data_base_dir = existing_yaml.parent
+
+        _prepare_data_yaml_for_inference(data_path, base_dir=data_base_dir)
 
         try:
             model = await run_in_threadpool(YOLO, str(model_path))
@@ -383,3 +394,96 @@ async def optimize_thresholds(
         "best": best_candidate,
         "production_config": production_config,
     }
+def _is_absolute_path(path_value: str) -> bool:
+    """Return True if given path string is absolute for POSIX or Windows systems."""
+
+    if not path_value:
+        return False
+    if Path(path_value).is_absolute():
+        return True
+    return ntpath.isabs(path_value)
+
+
+def _load_data_yaml(path: Path) -> Dict[str, Any]:
+    """Read YAML content and ensure dictionary structure."""
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:  # pragma: no cover - filesystem issues propagated to client
+        raise HTTPException(status_code=400, detail=f"data.yaml dosyası okunamadı: {exc}") from exc
+
+    try:
+        content = yaml.safe_load(text) or {}
+    except yaml.YAMLError as exc:
+        raise HTTPException(status_code=400, detail="data.yaml YAML formatında olmalıdır.") from exc
+
+    if not isinstance(content, dict):
+        raise HTTPException(status_code=400, detail="data.yaml sözlük formatında olmalıdır.")
+
+    return content
+
+
+def _resolve_dataset_root(content: Dict[str, Any], *, base_dir: Path) -> Path:
+    """Resolve dataset root directory using YAML content and provided base directory."""
+
+    raw_root = content.get("path")
+    if isinstance(raw_root, str) and raw_root.strip():
+        root_value = raw_root.strip()
+        if _is_absolute_path(root_value):
+            return Path(root_value)
+        return (base_dir / root_value).resolve()
+    return base_dir.resolve()
+
+
+def _resolve_split_directory(split_value: str, dataset_root: Path) -> Path:
+    """Resolve split directory path respecting absolute paths and dataset root."""
+
+    split_str = split_value.strip()
+    if _is_absolute_path(split_str):
+        return Path(split_str)
+
+    candidate = Path(split_str)
+    if _is_absolute_path(str(dataset_root)):
+        return dataset_root / candidate
+    return (dataset_root / candidate).resolve()
+
+
+def _prepare_data_yaml_for_inference(data_yaml_path: Path, *, base_dir: Path) -> None:
+    """Validate dataset configuration and normalise relative paths for Ultralytics."""
+
+    content = _load_data_yaml(data_yaml_path)
+
+    missing_required = [key for key in ("train", "val") if not isinstance(content.get(key), str) or not content.get(key)]
+    if missing_required:
+        missing_display = ", ".join(sorted(missing_required))
+        raise HTTPException(status_code=400, detail=f"data.yaml içinde '{missing_display}' anahtarları zorunludur.")
+
+    dataset_root = _resolve_dataset_root(content, base_dir=base_dir)
+
+    updated = False
+    missing_directories: List[str] = []
+
+    if isinstance(content.get("path"), str) and content["path"].strip() and not _is_absolute_path(content["path"].strip()):
+        content["path"] = str(dataset_root)
+        updated = True
+
+    for split in ("train", "val", "test"):
+        raw_value = content.get(split)
+        if not isinstance(raw_value, str) or not raw_value.strip():
+            continue
+
+        candidate = _resolve_split_directory(raw_value, dataset_root).expanduser()
+        if not candidate.is_dir():
+            missing_directories.append(f"{split}: {candidate}")
+            continue
+
+        if not _is_absolute_path(raw_value.strip()):
+            content[split] = str(candidate)
+            updated = True
+
+    if missing_directories:
+        formatted = ", ".join(missing_directories)
+        raise HTTPException(status_code=404, detail=f"Veri seti klasörleri bulunamadı: {formatted}")
+
+    if updated:
+        data_yaml_path.write_text(yaml.safe_dump(content, sort_keys=False, allow_unicode=True), encoding="utf-8")
