@@ -1187,6 +1187,24 @@ body {
   color: var(--text-secondary);
 }
 
+.dataset-root-input {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.dataset-root-input input[type="text"] {
+  padding: 0.65rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  font-size: 0.95rem;
+}
+
+.input-hint {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
 .range-input-group {
   display: flex;
   flex-direction: column;

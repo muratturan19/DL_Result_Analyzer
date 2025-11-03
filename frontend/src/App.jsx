@@ -404,6 +404,7 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
   const [result, setResult] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState(null);
+  const [datasetRoot, setDatasetRoot] = useState('');
 
   useEffect(() => {
     if (!initialArtifacts) return;
@@ -537,6 +538,11 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
       formData.append('data_yaml', dataSource.file);
     } else if (dataSource.kind === 'server') {
       formData.append('data_yaml_filename', dataSource.filename);
+    }
+
+    const trimmedDatasetRoot = datasetRoot.trim();
+    if (trimmedDatasetRoot) {
+      formData.append('dataset_root', trimmedDatasetRoot);
     }
 
     formData.append(
@@ -688,6 +694,19 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
               serverYamlName,
               useServerYaml
             )}
+          </div>
+
+          <div className="dataset-root-input">
+            <label>Veri seti kök klasörü (opsiyonel)</label>
+            <input
+              type="text"
+              placeholder="Örn. E:\\DELTA\\FKT\\Training_Results\\boxing_model_final_package\\Dataset"
+              value={datasetRoot}
+              onChange={(e) => setDatasetRoot(e.target.value)}
+            />
+            <span className="input-hint">
+              Göreli path'ler bu klasöre göre çözümlenir. Windows dizinleri için \ veya / kullanabilirsiniz.
+            </span>
           </div>
 
           <div className="split-select">

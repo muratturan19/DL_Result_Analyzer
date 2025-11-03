@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +26,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/optimize", tags=["optimization"])
 
 _ALLOWED_SPLITS = {"train", "val", "test"}
+_WINDOWS_DRIVE_PATTERN = re.compile(r"^[A-Za-z]:[/\\]")
+_WINDOWS_UNC_PATTERN = re.compile(r"^[/\\]{2}[^/\\]+[/\\]+[^/\\]+")
 
 
 def _normalize_float_values(values: Iterable[float], name: str) -> List[float]:
@@ -288,6 +291,7 @@ async def optimize_thresholds(
     best_model_filename: Optional[str] = Form(None),
     data_yaml_filename: Optional[str] = Form(None),
     split: str = Form("test"),
+    dataset_root: Optional[str] = Form(None),
 ):
     """Optimize IoU and confidence thresholds via grid search."""
 
@@ -357,7 +361,11 @@ async def optimize_thresholds(
             # Use the existing YAML's parent directory for resolving relative paths
             data_base_dir = existing_yaml.parent
 
-        _prepare_data_yaml_for_inference(data_path, base_dir=data_base_dir)
+        _prepare_data_yaml_for_inference(
+            data_path,
+            base_dir=data_base_dir,
+            dataset_root_override=dataset_root,
+        )
 
         try:
             model = await run_in_threadpool(YOLO, str(model_path))
@@ -395,15 +403,24 @@ async def optimize_thresholds(
         "best": best_candidate,
         "production_config": production_config,
     }
+
+
 def _is_absolute_path(path_value: str) -> bool:
     """Return True if given path string is absolute for POSIX or Windows systems."""
 
     if not path_value:
         return False
 
-    # Use Path.is_absolute() which respects the current OS
-    # This prevents Windows paths from being treated as absolute on Linux
-    return Path(path_value).is_absolute()
+    if Path(path_value).is_absolute():
+        return True
+
+    # Additional checks for Windows-style absolute paths when running on non-Windows systems
+    if _WINDOWS_DRIVE_PATTERN.match(path_value):
+        return True
+    if _WINDOWS_UNC_PATTERN.match(path_value):
+        return True
+
+    return False
 
 
 def _load_data_yaml(path: Path) -> Dict[str, Any]:
@@ -450,7 +467,12 @@ def _resolve_split_directory(split_value: str, dataset_root: Path) -> Path:
     return (dataset_root / candidate).resolve()
 
 
-def _prepare_data_yaml_for_inference(data_yaml_path: Path, *, base_dir: Path) -> None:
+def _prepare_data_yaml_for_inference(
+    data_yaml_path: Path,
+    *,
+    base_dir: Path,
+    dataset_root_override: Optional[str] = None,
+) -> None:
     """Validate dataset configuration and normalise relative paths for Ultralytics."""
 
     content = _load_data_yaml(data_yaml_path)
@@ -460,12 +482,32 @@ def _prepare_data_yaml_for_inference(data_yaml_path: Path, *, base_dir: Path) ->
         missing_display = ", ".join(sorted(missing_required))
         raise HTTPException(status_code=400, detail=f"data.yaml içinde '{missing_display}' anahtarları zorunludur.")
 
-    dataset_root = _resolve_dataset_root(content, base_dir=base_dir)
+    dataset_root: Path
+    override_path: Optional[Path] = None
+    if dataset_root_override and dataset_root_override.strip():
+        override_raw = dataset_root_override.strip()
+        override_candidate = Path(override_raw).expanduser()
+        if not _is_absolute_path(override_raw):
+            override_candidate = (base_dir / override_candidate).resolve()
+        if not override_candidate.is_dir():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Veri seti kök klasörü bulunamadı: {override_candidate}",
+            )
+        dataset_root = override_candidate
+        override_path = override_candidate
+    else:
+        dataset_root = _resolve_dataset_root(content, base_dir=base_dir)
 
+    dataset_root = dataset_root.expanduser()
     updated = False
     missing_directories: List[str] = []
 
-    if isinstance(content.get("path"), str) and content["path"].strip() and not _is_absolute_path(content["path"].strip()):
+    if override_path is not None:
+        if content.get("path") != str(override_path):
+            content["path"] = str(override_path)
+            updated = True
+    elif isinstance(content.get("path"), str) and content["path"].strip() and not _is_absolute_path(content["path"].strip()):
         content["path"] = str(dataset_root)
         updated = True
 
