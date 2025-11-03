@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
 import {
   ResponsiveContainer,
@@ -17,6 +17,41 @@ const formatPercent = (value, digits = 1) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return 'N/A';
   return `${(numeric * 100).toFixed(digits)}%`;
+};
+
+const formatDuration = (seconds) => {
+  const numeric = Number(seconds);
+  if (!Number.isFinite(numeric) || numeric < 0) return '—';
+  const totalSeconds = Math.floor(numeric);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const secs = totalSeconds % 60;
+  const parts = [
+    hours > 0 ? String(hours).padStart(2, '0') : null,
+    String(hours > 0 ? minutes : Math.max(minutes, 0)).padStart(2, '0'),
+    String(secs).padStart(2, '0')
+  ].filter(Boolean);
+  return parts.join(':');
+};
+
+const buildRangeValues = (range) => {
+  if (!range) return [];
+  const start = Number(range.start);
+  const end = Number(range.end);
+  const step = Number(range.step);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || !Number.isFinite(step) || step <= 0) {
+    return [];
+  }
+  const values = [];
+  for (let current = start; current <= end + 1e-9; current += step) {
+    values.push(Number(current.toFixed(6)));
+  }
+  if (values.length === 0 || values[values.length - 1] < Number(end.toFixed(6))) {
+    values.push(Number(end.toFixed(6)));
+  }
+  const unique = Array.from(new Set(values.map((value) => Number(value.toFixed(6)))));
+  unique.sort((a, b) => a - b);
+  return unique;
 };
 
 const calculateTrend = (series = []) => {
@@ -405,6 +440,11 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState(null);
   const [datasetRoot, setDatasetRoot] = useState('');
+  const [progressInfo, setProgressInfo] = useState(null);
+  const [progressError, setProgressError] = useState(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const progressPollRef = useRef(null);
+  const elapsedTimerRef = useRef(null);
 
   useEffect(() => {
     if (!initialArtifacts) return;
@@ -450,6 +490,10 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
     }
   }, [initialArtifacts]);
 
+  const estimatedIouValues = useMemo(() => buildRangeValues(iouRange), [iouRange]);
+  const estimatedConfValues = useMemo(() => buildRangeValues(confRange), [confRange]);
+  const estimatedTotalCycles = estimatedIouValues.length * estimatedConfValues.length;
+
   const serverBestName = useMemo(() => {
     if (initialArtifacts?.serverBest) return initialArtifacts.serverBest;
     if (typeof initialArtifacts?.best === 'string') return initialArtifacts.best;
@@ -466,6 +510,74 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
     if (!result?.heatmap?.values) return 0;
     return result.heatmap.values.length;
   }, [result]);
+
+  const stopProgressPolling = useCallback(() => {
+    if (progressPollRef.current) {
+      clearInterval(progressPollRef.current);
+      progressPollRef.current = null;
+    }
+  }, []);
+
+  const stopElapsedTimer = useCallback(() => {
+    if (elapsedTimerRef.current) {
+      clearInterval(elapsedTimerRef.current);
+      elapsedTimerRef.current = null;
+    }
+  }, []);
+
+  const clearProgressTimers = useCallback(() => {
+    stopProgressPolling();
+    stopElapsedTimer();
+  }, [stopProgressPolling, stopElapsedTimer]);
+
+  useEffect(() => () => clearProgressTimers(), [clearProgressTimers]);
+
+  const fetchProgressSnapshot = useCallback(
+    async (id) => {
+      if (!id) return false;
+      try {
+        const response = await fetch(`http://localhost:8000/api/optimize/thresholds/status/${id}`);
+        if (!response.ok) {
+          if (response.status === 404) {
+            return false;
+          }
+          throw new Error(`Status ${response.status}`);
+        }
+        const payload = await response.json();
+        setProgressInfo(payload);
+        setProgressError(null);
+        return true;
+      } catch (err) {
+        console.error('Progress polling failed:', err);
+        setProgressError('İlerleme bilgisi alınamadı. Bağlantıyı kontrol edin.');
+        return false;
+      }
+    },
+    []
+  );
+
+  const startProgressPolling = useCallback(
+    (id) => {
+      if (!id) return;
+      stopProgressPolling();
+      const poll = () => {
+        void fetchProgressSnapshot(id);
+      };
+      poll();
+      progressPollRef.current = setInterval(poll, 2000);
+    },
+    [stopProgressPolling, fetchProgressSnapshot]
+  );
+
+  const startElapsedTimer = useCallback(() => {
+    stopElapsedTimer();
+    const startedAt = Date.now();
+    setElapsedSeconds(0);
+    elapsedTimerRef.current = setInterval(() => {
+      const diff = Math.floor((Date.now() - startedAt) / 1000);
+      setElapsedSeconds(diff);
+    }, 1000);
+  }, [stopElapsedTimer]);
 
   const updateIouRange = (key, value) => {
     const numeric = Number(value);
@@ -525,6 +637,32 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
 
     setError(null);
     setResult(null);
+    setProgressError(null);
+    stopProgressPolling();
+    stopElapsedTimer();
+
+    const newProgressId =
+      typeof crypto !== 'undefined' && crypto?.randomUUID
+        ? crypto.randomUUID()
+        : `progress-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const startedAtIso = new Date().toISOString();
+    setProgressInfo({
+      progress_id: newProgressId,
+      status: 'running',
+      total_cycles: estimatedTotalCycles,
+      completed_cycles: 0,
+      progress: estimatedTotalCycles > 0 ? 0 : null,
+      current_iou: null,
+      current_confidence: null,
+      started_at: startedAtIso,
+      updated_at: startedAtIso,
+      elapsed_seconds: 0,
+      estimated_remaining_seconds: null
+    });
+    setElapsedSeconds(0);
+    startElapsedTimer();
+    startProgressPolling(newProgressId);
+
     setIsRunning(true);
 
     const formData = new FormData();
@@ -553,6 +691,7 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
       })
     );
     formData.append('split', split);
+    formData.append('progress_id', newProgressId);
 
     try {
       const response = await fetch('http://localhost:8000/api/optimize/thresholds', {
@@ -569,6 +708,7 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
       }
 
       setResult(payload);
+      await fetchProgressSnapshot(newProgressId);
     } catch (err) {
       console.error('Threshold optimization failed:', err);
       setResult(null);
@@ -577,7 +717,20 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
           ? err.message
           : 'Optimizasyon sırasında hata oluştu. Backend şu anda gerçek YOLO değerlendirmesi sunmuyor olabilir.'
       );
+      const snapshotReceived = await fetchProgressSnapshot(newProgressId);
+      if (!snapshotReceived) {
+        setProgressInfo((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: 'error'
+              }
+            : prev
+        );
+      }
     } finally {
+      stopProgressPolling();
+      stopElapsedTimer();
       setIsRunning(false);
     }
   };
@@ -635,6 +788,39 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
   };
 
   const bestMetrics = result?.best;
+
+  const totalCycles = Number(progressInfo?.total_cycles) > 0 ? progressInfo.total_cycles : estimatedTotalCycles;
+  const completedCycles = Number(progressInfo?.completed_cycles) > 0 ? progressInfo.completed_cycles : 0;
+  const rawProgressRatio = (() => {
+    if (progressInfo && Number.isFinite(progressInfo.progress)) {
+      return progressInfo.progress;
+    }
+    if (totalCycles) {
+      return completedCycles / totalCycles;
+    }
+    return 0;
+  })();
+  const clampedProgressRatio = Math.max(0, Math.min(1, rawProgressRatio || 0));
+  const progressPercent = Math.round(clampedProgressRatio * 100);
+  const elapsedDisplaySeconds = progressInfo?.elapsed_seconds ?? elapsedSeconds;
+  const remainingSeconds = progressInfo?.estimated_remaining_seconds;
+  const currentStepLabel = progressInfo?.current_iou != null && progressInfo?.current_confidence != null
+    ? `IoU ${Number(progressInfo.current_iou).toFixed(2)} · Conf ${Number(progressInfo.current_confidence).toFixed(2)}`
+    : isRunning
+      ? 'Hazırlanıyor'
+      : '—';
+  const progressStatus = progressInfo?.status || (isRunning ? 'running' : null);
+  const progressStatusLabel = progressStatus === 'success'
+    ? 'Optimizasyon tamamlandı'
+    : progressStatus === 'error'
+      ? 'Optimizasyon hata verdi'
+      : 'Optimizasyon devam ediyor';
+  const completedCycleLabel = totalCycles
+    ? `${Math.min(completedCycles, totalCycles).toLocaleString('tr-TR')} / ${totalCycles.toLocaleString('tr-TR')} cycle`
+    : completedCycles
+      ? `${completedCycles.toLocaleString('tr-TR')} cycle`
+      : 'Cycle bilgisi hazırlanıyor';
+  const formattedProgressPercent = progressPercent.toLocaleString('tr-TR');
 
   return (
     <div className="optimizer-card">
@@ -814,6 +1000,41 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
           <button className="btn-primary" type="button" onClick={handleOptimize} disabled={isRunning}>
             {isRunning ? '⏳ Optimizasyon...' : 'Optimizasyonu Başlat'}
           </button>
+
+          {(isRunning || progressInfo) && (
+            <div className={`optimizer-progress-card ${progressStatus || 'running'}`}>
+              <div className="optimizer-progress-top">
+                <span className="progress-status-badge">{progressStatusLabel}</span>
+                <span className="progress-cycle-count">{completedCycleLabel}</span>
+              </div>
+              <div className="optimizer-progress-bar">
+                <div style={{ width: `${progressPercent}%` }} />
+              </div>
+              <div className="optimizer-progress-meta">
+                <div className="progress-meta-item">
+                  <span>Geçen Süre</span>
+                  <strong>{formatDuration(elapsedDisplaySeconds)}</strong>
+                </div>
+                <div className="progress-meta-item">
+                  <span>Tahmini Kalan</span>
+                  <strong>{Number.isFinite(remainingSeconds) ? formatDuration(remainingSeconds) : '—'}</strong>
+                </div>
+                <div className="progress-meta-item">
+                  <span>Şu Anki Kombinasyon</span>
+                  <strong>{currentStepLabel}</strong>
+                </div>
+                <div className="progress-meta-item">
+                  <span>İlerleme</span>
+                  <strong>%{formattedProgressPercent}</strong>
+                </div>
+              </div>
+              {progressInfo?.detail && (
+                <div className="optimizer-progress-detail">{progressInfo.detail}</div>
+              )}
+            </div>
+          )}
+
+          {progressError && <div className="optimizer-progress-warning">{progressError}</div>}
 
           {error && <div className="optimizer-error">{error}</div>}
         </div>
