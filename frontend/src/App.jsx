@@ -1745,7 +1745,7 @@ function App() {
     setLoadingStatus('parsing');
 
     if (uploadResponse.files) {
-      setArtifacts((prev) => ({ ...prev, server: uploadResponse.files }));
+      setArtifacts({ server: uploadResponse.files });
     }
 
     if (responseAnalysis) {
@@ -1921,9 +1921,9 @@ function App() {
       <main className="app-main threshold-main">
         <ThresholdOptimizer
           initialArtifacts={{
-            best: artifacts?.client?.best || artifacts?.server?.best || null,
-            yaml: artifacts?.client?.yaml || artifacts?.server?.yaml || null,
-            serverBest: artifacts?.server?.best || null,
+            best: artifacts?.server?.best_model || artifacts?.client?.best || null,
+            yaml: artifacts?.server?.yaml || artifacts?.client?.yaml || null,
+            serverBest: artifacts?.server?.best_model || null,
             serverYaml: artifacts?.server?.yaml || null
           }}
         />
