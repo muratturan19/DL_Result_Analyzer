@@ -11,7 +11,9 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Lock
 from typing import Any, Dict, Iterable, List, Optional
+from uuid import uuid4
 
 import yaml
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -25,9 +27,98 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/optimize", tags=["optimization"])
 
+_progress_registry: dict[str, dict[str, Any]] = {}
+_progress_lock = Lock()
+
 _ALLOWED_SPLITS = {"train", "val", "test"}
 _WINDOWS_DRIVE_PATTERN = re.compile(r"^[A-Za-z]:[/\\]")
 _WINDOWS_UNC_PATTERN = re.compile(r"^[/\\]{2}[^/\\]+[/\\]+[^/\\]+")
+
+
+def _init_progress(progress_id: str, total_cycles: int) -> None:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "progress_id": progress_id,
+        "status": "running",
+        "total_cycles": total_cycles,
+        "completed_cycles": 0,
+        "progress": 0.0,
+        "current_iou": None,
+        "current_confidence": None,
+        "started_at": now.isoformat(),
+        "updated_at": now.isoformat(),
+        "elapsed_seconds": 0.0,
+        "estimated_remaining_seconds": None,
+    }
+    with _progress_lock:
+        _progress_registry[progress_id] = payload
+
+
+def _update_progress(
+    progress_id: str,
+    *,
+    completed_cycles: int,
+    total_cycles: int,
+    current_iou: float,
+    current_confidence: float,
+    start_time: datetime,
+) -> None:
+    now = datetime.now(timezone.utc)
+    elapsed = max((now - start_time).total_seconds(), 0.0)
+    average_cycle = elapsed / completed_cycles if completed_cycles else None
+    remaining = None
+    if average_cycle is not None and total_cycles >= completed_cycles:
+        remaining = max((total_cycles - completed_cycles) * average_cycle, 0.0)
+
+    with _progress_lock:
+        entry = _progress_registry.get(progress_id)
+        if entry is None:
+            entry = {
+                "progress_id": progress_id,
+                "status": "running",
+                "total_cycles": total_cycles,
+                "started_at": start_time.isoformat(),
+            }
+            _progress_registry[progress_id] = entry
+        entry.update(
+            {
+                "status": "running",
+                "completed_cycles": completed_cycles,
+                "total_cycles": total_cycles,
+                "progress": completed_cycles / total_cycles if total_cycles else 0.0,
+                "current_iou": round(float(current_iou), 6),
+                "current_confidence": round(float(current_confidence), 6),
+                "updated_at": now.isoformat(),
+                "elapsed_seconds": round(elapsed, 2),
+                "estimated_remaining_seconds": None if remaining is None else round(remaining, 2),
+            }
+        )
+
+
+def _finalize_progress(progress_id: str, *, status: str, detail: Optional[str] = None) -> None:
+    now = datetime.now(timezone.utc)
+    with _progress_lock:
+        entry = _progress_registry.get(progress_id)
+        if entry is None:
+            entry = {
+                "progress_id": progress_id,
+                "total_cycles": 0,
+                "completed_cycles": 0,
+            }
+            _progress_registry[progress_id] = entry
+        if status == "success" and entry.get("total_cycles"):
+            entry.setdefault("completed_cycles", entry.get("total_cycles", 0))
+            total_cycles = entry.get("total_cycles", 0) or 0
+            if total_cycles:
+                entry["progress"] = 1.0
+        entry.update(
+            {
+                "status": status,
+                "detail": detail,
+                "finished_at": now.isoformat(),
+                "updated_at": now.isoformat(),
+            }
+        )
 
 
 def _normalize_float_values(values: Iterable[float], name: str) -> List[float]:
@@ -219,9 +310,12 @@ def _run_grid_search(
     split: str,
     iou_values: List[float],
     conf_values: List[float],
+    progress_callback: Optional[Any] = None,
 ) -> tuple[list[list[Dict[str, float]]], List[Dict[str, float]]]:
     heatmap_rows: list[list[Dict[str, float]]] = []
     flat_results: List[Dict[str, float]] = []
+    total_cycles = len(iou_values) * len(conf_values)
+    completed_cycles = 0
 
     for iou in iou_values:
         row: list[Dict[str, float]] = []
@@ -265,6 +359,12 @@ def _run_grid_search(
             cell = _format_cell(iou, conf, cell_metrics)
             row.append(cell)
             flat_results.append(cell)
+            completed_cycles += 1
+            if progress_callback is not None:
+                try:
+                    progress_callback(completed_cycles, total_cycles, iou, conf)
+                except Exception:  # pragma: no cover - defensive safety
+                    logger.exception("Progress callback failed")
         heatmap_rows.append(row)
 
     return heatmap_rows, flat_results
@@ -292,6 +392,7 @@ async def optimize_thresholds(
     data_yaml_filename: Optional[str] = Form(None),
     split: str = Form("test"),
     dataset_root: Optional[str] = Form(None),
+    progress_id: Optional[str] = Form(None),
 ):
     """Optimize IoU and confidence thresholds via grid search."""
 
@@ -314,18 +415,35 @@ async def optimize_thresholds(
         iou_values = _parse_single_range(iou_range, "IoU")
         conf_values = _parse_single_range(conf_range, "Confidence")
 
+    total_cycles = len(iou_values) * len(conf_values)
+    progress_token = (progress_id or "").strip() or str(uuid4())
+    start_time = datetime.now(timezone.utc)
+    _init_progress(progress_token, total_cycles)
+
     logger.info(
-        "Threshold optimization started for model=%s data=%s",
+        "Threshold optimization started for model=%s data=%s progress_id=%s",
         best_model.filename if best_model else best_model_filename,
         data_yaml.filename if data_yaml else data_yaml_filename,
+        progress_token,
     )
 
-    with TemporaryDirectory(prefix="threshold_opt_") as tmp_dir:
-        tmp_path = Path(tmp_dir)
-        if best_model is not None:
-            model_filename_raw = best_model.filename
-        else:
-            model_filename_raw = best_model_filename
+    def _progress_hook(completed: int, total: int, iou_value: float, conf_value: float) -> None:
+        _update_progress(
+            progress_token,
+            completed_cycles=completed,
+            total_cycles=total,
+            current_iou=iou_value,
+            current_confidence=conf_value,
+            start_time=start_time,
+        )
+
+    try:
+        with TemporaryDirectory(prefix="threshold_opt_") as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            if best_model is not None:
+                model_filename_raw = best_model.filename
+            else:
+                model_filename_raw = best_model_filename
         model_filename = Path(model_filename_raw or "best.pt").name
 
         if data_yaml is not None:
@@ -380,8 +498,18 @@ async def optimize_thresholds(
             split=split,
             iou_values=iou_values,
             conf_values=conf_values,
+            progress_callback=_progress_hook,
         )
         task = model.task
+
+    except HTTPException as exc:
+        _finalize_progress(progress_token, status="error", detail=str(exc.detail))
+        raise
+    except Exception as exc:  # pragma: no cover - unexpected failure surface
+        _finalize_progress(progress_token, status="error", detail=str(exc))
+        raise
+
+    _finalize_progress(progress_token, status="success")
 
     best_candidate = _select_best_candidate(flat_results)
     production_config = _build_production_config(
@@ -402,6 +530,7 @@ async def optimize_thresholds(
         },
         "best": best_candidate,
         "production_config": production_config,
+        "progress_id": progress_token,
     }
 
 
@@ -421,6 +550,19 @@ def _is_absolute_path(path_value: str) -> bool:
         return True
 
     return False
+
+
+@router.get("/thresholds/status/{progress_id}")
+async def get_threshold_status(progress_id: str) -> Dict[str, Any]:
+    """Return live progress information for a threshold optimization run."""
+
+    with _progress_lock:
+        entry = _progress_registry.get(progress_id)
+
+    if entry is None:
+        raise HTTPException(status_code=404, detail="İlerleme bilgisi bulunamadı.")
+
+    return entry
 
 
 def _load_data_yaml(path: Path) -> Dict[str, Any]:
