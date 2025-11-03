@@ -1,0 +1,30 @@
+# Prevent Git from modifying line endings in binary files
+
+# Font files
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.eot binary
+
+# Model files
+*.pt binary
+*.pth binary
+*.pkl binary
+*.h5 binary
+*.onnx binary
+
+# Image files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+
+# Archive files
+*.zip binary
+*.tar binary
+*.gz binary
+*.bz2 binary
+*.7z binary
