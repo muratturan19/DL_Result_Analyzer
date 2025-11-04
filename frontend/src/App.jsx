@@ -2200,7 +2200,7 @@ function App() {
       </aside>
 
       <div className="app-content">
-        <div className="app-container">
+        <div className={`app-container ${activePage === 'threshold' ? 'threshold-container' : ''}`}>
           {activePage === 'dashboard' ? renderDashboard() : renderThresholdPage()}
         </div>
       </div>
