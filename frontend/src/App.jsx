@@ -443,6 +443,11 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
   const [progressInfo, setProgressInfo] = useState(null);
   const [progressError, setProgressError] = useState(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [reportId, setReportId] = useState(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [savedReports, setSavedReports] = useState([]);
+  const [showReportsList, setShowReportsList] = useState(false);
+  const [isLoadingReports, setIsLoadingReports] = useState(false);
   const progressPollRef = useRef(null);
   const elapsedTimerRef = useRef(null);
 
@@ -708,6 +713,7 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
       }
 
       setResult(payload);
+      setReportId(payload.report_id || null);
       await fetchProgressSnapshot(newProgressId);
     } catch (err) {
       console.error('Threshold optimization failed:', err);
@@ -741,6 +747,90 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
     link.href = `data:text/yaml;base64,${result.production_config.base64}`;
     link.download = result.production_config.filename || 'production_config.yaml';
     link.click();
+  };
+
+  const exportReport = async (format) => {
+    if (!reportId) {
+      setError('Henüz kaydedilmiş bir rapor yok.');
+      return;
+    }
+
+    setIsExporting(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`http://localhost:8000/api/optimize/thresholds/reports/${reportId}/export?format=${format}`);
+      if (!response.ok) {
+        let message = 'Rapor dışa aktarılamadı.';
+        try {
+          const payload = await response.json();
+          if (payload?.detail) {
+            message = payload.detail;
+          }
+        } catch (err) {
+          console.debug('Export error payload parse failed', err);
+        }
+        throw new Error(message);
+      }
+
+      const blob = await response.blob();
+      const extension = format === 'pdf' ? 'pdf' : 'html';
+      const filename = `threshold-report-${reportId.slice(0, 8)}.${extension}`;
+
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Rapor dışa aktarılamadı.';
+      setError(message);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const loadSavedReports = async () => {
+    setIsLoadingReports(true);
+    setError(null);
+
+    try {
+      const response = await fetch('http://localhost:8000/api/optimize/thresholds/reports');
+      if (!response.ok) {
+        throw new Error('Kaydedilmiş raporlar yüklenemedi.');
+      }
+
+      const data = await response.json();
+      setSavedReports(data.reports || []);
+      setShowReportsList(true);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Raporlar yüklenemedi.';
+      setError(message);
+    } finally {
+      setIsLoadingReports(false);
+    }
+  };
+
+  const loadReport = async (id) => {
+    setError(null);
+
+    try {
+      const response = await fetch(`http://localhost:8000/api/optimize/thresholds/reports/${id}`);
+      if (!response.ok) {
+        throw new Error('Rapor yüklenemedi.');
+      }
+
+      const data = await response.json();
+      setResult(data);
+      setReportId(id);
+      setShowReportsList(false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Rapor yüklenemedi.';
+      setError(message);
+    }
   };
 
   const useServerBest = () => {
@@ -824,11 +914,98 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
 
   return (
     <div className="optimizer-card">
-      <h2>🎛️ Threshold Optimizer</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+        <h2 style={{ margin: 0 }}>🎛️ Threshold Optimizer</h2>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={loadSavedReports}
+          disabled={isLoadingReports}
+          style={{ padding: '8px 16px', fontSize: '14px' }}
+        >
+          {isLoadingReports ? '⏳ Yükleniyor...' : '📂 Kaydedilmiş Raporlar'}
+        </button>
+      </div>
       <p className="optimizer-subtitle">
         IoU ve confidence eşiklerini grid search ile tarayın, daha önce yüklediğiniz best.pt dosyasını tekrar kullanarak
         production için en iyi kombinasyonu bulun.
       </p>
+
+      {showReportsList && (
+        <div className="saved-reports-modal" style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: '16px',
+            padding: '24px',
+            maxWidth: '800px',
+            maxHeight: '80vh',
+            overflow: 'auto',
+            width: '90%'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0 }}>📂 Kaydedilmiş Threshold Raporları</h3>
+              <button
+                type="button"
+                onClick={() => setShowReportsList(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '24px',
+                  cursor: 'pointer',
+                  padding: '4px 8px'
+                }}
+              >
+                ✕
+              </button>
+            </div>
+            {savedReports.length === 0 ? (
+              <p>Henüz kaydedilmiş rapor yok.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {savedReports.map((report) => (
+                  <div
+                    key={report.report_id}
+                    style={{
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '8px',
+                      padding: '16px',
+                      cursor: 'pointer',
+                      transition: 'background 0.2s'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = '#f9fafb'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'white'}
+                    onClick={() => loadReport(report.report_id)}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                      <strong>{report.model_filename || 'Model'}</strong>
+                      <span style={{ fontSize: '12px', color: '#6b7280' }}>
+                        {new Date(report.timestamp).toLocaleString('tr-TR')}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '14px', color: '#4b5563' }}>
+                      <div>Split: {report.split} • Kombinasyon: {report.total_combinations}</div>
+                      <div>
+                        En İyi: IoU {report.best_iou?.toFixed(2)} • Conf {report.best_confidence?.toFixed(2)} • F1 {formatPercent(report.best_f1)}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="optimizer-grid">
         <div className="optimizer-inputs">
@@ -1083,7 +1260,21 @@ const ThresholdOptimizer = ({ initialArtifacts }) => {
                 <button className="btn-secondary" type="button" onClick={downloadConfig}>
                   production_config.yaml indir
                 </button>
-                <span className="summary-note">Konfigürasyon dosyası production için hazır.</span>
+                {reportId && (
+                  <>
+                    <button className="btn-secondary" type="button" onClick={() => exportReport('pdf')} disabled={isExporting}>
+                      {isExporting ? '⏳ Export ediliyor...' : 'PDF olarak indir'}
+                    </button>
+                    <button className="btn-secondary" type="button" onClick={() => exportReport('html')} disabled={isExporting}>
+                      HTML olarak indir
+                    </button>
+                  </>
+                )}
+                <span className="summary-note">
+                  {reportId
+                    ? `Rapor kaydedildi (ID: ${reportId.slice(0, 8)}...) • Konfigürasyon dosyası production için hazır.`
+                    : 'Konfigürasyon dosyası production için hazır.'}
+                </span>
               </div>
             </div>
 
