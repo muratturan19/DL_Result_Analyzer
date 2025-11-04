@@ -1108,6 +1108,9 @@ async def upload_results(
     - args.yaml: config
     - *.png: graphs (confusion_matrix, F1_curve, etc.)
     """
+    import time
+    request_start_time = time.time()
+
     uploads_dir = Path("uploads")
     uploads_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1115,7 +1118,7 @@ async def upload_results(
     csv_path = uploads_dir / csv_filename
 
     logger.info(
-        "Upload request received: csv=%s yaml=%s graphs=%s best_model=%s training_code=%s",
+        "=== UPLOAD REQUEST STARTED === csv=%s yaml=%s graphs=%s best_model=%s training_code=%s",
         csv_filename,
         config_yaml.filename if config_yaml else None,
         len(graphs or []),
@@ -1142,7 +1145,10 @@ async def upload_results(
             logger.warning("Geçersiz class_count değeri alındı: %s", class_count)
 
     try:
+        logger.info("CSV dosyası okunuyor...")
         csv_bytes = await results_csv.read()
+        csv_size_mb = len(csv_bytes) / (1024 * 1024)
+        logger.info("CSV dosyası okundu: %.2f MB", csv_size_mb)
         csv_path.write_bytes(csv_bytes)
         logger.info("CSV dosyası kaydedildi: %s", csv_path)
     except Exception as exc:
@@ -1217,13 +1223,18 @@ async def upload_results(
         from app.parsers.yolo_parser import YOLOResultParser
         from app.analyzers.llm_analyzer import LLMAnalyzer
 
+        logger.info("Parsing başlatılıyor...")
+        parse_start_time = time.time()
+
         parser = YOLOResultParser(csv_path, yaml_path)
         metrics = parser.parse_metrics()
         config = parser.parse_config()
         history = parser.parse_training_curves()
 
+        parse_duration = time.time() - parse_start_time
         logger.info(
-            "Metrix ve konfigürasyon parse edildi: metrics_keys=%s config_keys=%s",
+            "Metrix ve konfigürasyon parse edildi (%.2fs): metrics_keys=%s config_keys=%s",
+            parse_duration,
             sorted(metrics.keys()),
             sorted(config.keys()),
         )
@@ -1276,9 +1287,11 @@ async def upload_results(
             provider = "claude"
 
         analysis: Dict[str, Any] = {}
+        llm_start_time = time.time()
         try:
             analyzer = LLMAnalyzer(provider=provider)  # type: ignore[arg-type]
             logger.info("LLM analizi başlatılıyor: provider=%s", provider)
+
             analysis = analyzer.analyze(
                 metrics,
                 enriched_config,
@@ -1287,9 +1300,17 @@ async def upload_results(
                 history=history,
                 artefacts=artefacts_info,
             )
-            logger.info("LLM analizi tamamlandı: provider=%s", provider)
+
+            llm_duration = time.time() - llm_start_time
+            logger.info(
+                "LLM analizi tamamlandı (%.2fs): provider=%s, has_summary=%s",
+                llm_duration,
+                provider,
+                "summary" in analysis,
+            )
         except Exception as exc:
-            logger.exception("LLM analizi başarısız oldu")
+            llm_duration = time.time() - llm_start_time
+            logger.exception("LLM analizi başarısız oldu (%.2fs): %s", llm_duration, str(exc))
             analysis = {
                 "summary": "LLM analizi gerçekleştirilemedi.",
                 "strengths": [],
@@ -1324,6 +1345,14 @@ async def upload_results(
 
         report_id = REPORT_STORE.save(report_context)
 
+        total_duration = time.time() - request_start_time
+        logger.info(
+            "=== UPLOAD REQUEST COMPLETED === Duration: %.2fs, ReportID: %s, Provider: %s",
+            total_duration,
+            report_id,
+            provider,
+        )
+
         return {
             "status": "success",
             "metrics": metrics,
@@ -1339,10 +1368,15 @@ async def upload_results(
             "llm_provider": provider,
         }
     except (FileNotFoundError, ValueError) as exc:
-        logger.exception("Dosya veya veri hatası nedeniyle upload başarısız oldu")
+        total_duration = time.time() - request_start_time
+        logger.exception(
+            "Dosya veya veri hatası nedeniyle upload başarısız oldu (Duration: %.2fs)",
+            total_duration,
+        )
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # pragma: no cover - unexpected failures
-        logger.exception("Beklenmeyen bir hata oluştu")
+        total_duration = time.time() - request_start_time
+        logger.exception("Beklenmeyen bir hata oluştu (Duration: %.2fs)", total_duration)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
