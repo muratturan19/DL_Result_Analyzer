@@ -149,6 +149,11 @@ h3 {
   margin: 0 auto;
   padding: 0 1.75rem;
   z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 2rem;
+  flex-wrap: wrap;
 }
 
 .report-meta {
@@ -156,6 +161,8 @@ h3 {
   flex-direction: column;
   gap: 0.6rem;
   color: rgba(241, 245, 249, 0.9);
+  flex: 1;
+  min-width: 0;
 }
 
 .report-meta p {
@@ -168,8 +175,8 @@ h3 {
   display: flex;
   gap: 0.75rem;
   align-items: center;
-  margin-top: 1.5rem;
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .btn {
