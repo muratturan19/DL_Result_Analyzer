@@ -99,6 +99,10 @@ body {
   gap: 2rem;
 }
 
+.app-container.threshold-container {
+  max-width: 1600px;
+}
+
 .app-header {
   text-align: center;
   background: linear-gradient(135deg, rgba(79, 70, 229, 0.1), rgba(14, 165, 233, 0.1));
@@ -133,7 +137,7 @@ body {
 
 .app-main.threshold-main .optimizer-card {
   width: 100%;
-  max-width: 960px;
+  max-width: none;
 }
 
 @media (max-width: 1024px) {
