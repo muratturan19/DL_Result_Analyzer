@@ -1463,6 +1463,127 @@ async def get_history():
     return {"runs": []}
 
 
+@app.post("/api/analyze/predictions")
+async def analyze_predictions(
+    prediction_images: List[UploadFile] = File(...),
+    model_name: Optional[str] = Form(None),
+    precision: Optional[str] = Form(None),
+    recall: Optional[str] = Form(None),
+    map50: Optional[str] = Form(None),
+    llm_provider: str = Form("claude"),
+):
+    """
+    Analyze YOLO validation prediction images (val_batch*.jpg) for:
+    - False Negatives (missed detections)
+    - False Positives (incorrect detections)
+    - Confidence score distributions
+    - Data collection strategy recommendations
+
+    Args:
+        prediction_images: List of validation prediction images
+        model_name: Optional model identifier
+        precision: Optional precision metric
+        recall: Optional recall metric
+        map50: Optional mAP@0.5 metric
+        llm_provider: LLM provider to use (claude/openai)
+
+    Returns:
+        Detailed analysis with FN/FP insights and actionable recommendations
+    """
+    if not prediction_images:
+        raise HTTPException(status_code=400, detail="En az bir görüntü yüklemelisiniz.")
+
+    # Only Claude supports vision analysis for now
+    if llm_provider != "claude":
+        raise HTTPException(
+            status_code=400,
+            detail="Görüntü analizi şu anda sadece Claude provider ile desteklenmektedir."
+        )
+
+    uploads_dir = Path("uploads") / "predictions"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save uploaded images
+    saved_image_paths: List[Path] = []
+    for img_file in prediction_images:
+        img_filename = Path(img_file.filename or "prediction.jpg").name
+        img_path = uploads_dir / img_filename
+
+        try:
+            img_bytes = await img_file.read()
+            img_path.write_bytes(img_bytes)
+            saved_image_paths.append(img_path)
+            logger.info("Prediction image saved: %s", img_path)
+        except Exception as exc:
+            logger.exception("Failed to save prediction image: %s", img_filename)
+            raise HTTPException(status_code=500, detail=f"Görüntü kaydedilemedi: {exc}") from exc
+
+    if not saved_image_paths:
+        raise HTTPException(status_code=400, detail="Hiçbir görüntü kaydedilemedi.")
+
+    # Build model info context
+    model_info: Dict[str, Any] = {}
+    if model_name:
+        model_info["model_name"] = model_name
+
+    # Parse optional metrics
+    if precision:
+        try:
+            model_info["precision"] = float(precision)
+        except (ValueError, TypeError):
+            logger.warning("Invalid precision value: %s", precision)
+
+    if recall:
+        try:
+            model_info["recall"] = float(recall)
+        except (ValueError, TypeError):
+            logger.warning("Invalid recall value: %s", recall)
+
+    if map50:
+        try:
+            model_info["map50"] = float(map50)
+        except (ValueError, TypeError):
+            logger.warning("Invalid map50 value: %s", map50)
+
+    # Analyze with LLM
+    try:
+        from app.analyzers.llm_analyzer import LLMAnalyzer
+
+        analyzer = LLMAnalyzer(provider="claude")
+        logger.info(
+            "Starting prediction image analysis: images=%d, model_info=%s",
+            len(saved_image_paths),
+            model_info,
+        )
+
+        analysis = analyzer.analyze_prediction_images(
+            image_paths=saved_image_paths,
+            model_info=model_info if model_info else None,
+        )
+
+        logger.info("Prediction analysis completed successfully")
+
+        return {
+            "status": "success",
+            "analysis": analysis,
+            "images_analyzed": len(saved_image_paths),
+            "model_info": model_info,
+        }
+
+    except NotImplementedError as exc:
+        logger.exception("Prediction analysis not supported")
+        raise HTTPException(
+            status_code=501,
+            detail="Görüntü analizi sadece Claude provider ile desteklenmektedir."
+        ) from exc
+    except Exception as exc:
+        logger.exception("Prediction analysis failed")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Analiz başarısız oldu: {exc}"
+        ) from exc
+
+
 def _generate_threshold_html_report(report_id: str, context: Dict[str, Any]) -> str:
     """Generate HTML report for threshold optimization results."""
     model_filename = escape(str(context.get("model_filename", "N/A")))

@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prediction Image Analyzer - DL Result Analyzer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Roboto, -apple-system, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 2rem;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 3rem;
+            color: white;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 2rem;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            margin-bottom: 2rem;
+        }
+
+        .upload-section {
+            border: 3px dashed #667eea;
+            border-radius: 12px;
+            padding: 3rem;
+            text-align: center;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .upload-section:hover {
+            border-color: #764ba2;
+            background: #f8f9ff;
+        }
+
+        .upload-section.dragover {
+            background: #e8ecff;
+            border-color: #5a67d8;
+            transform: scale(1.02);
+        }
+
+        .upload-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+        }
+
+        .upload-section h2 {
+            color: #667eea;
+            margin-bottom: 0.5rem;
+            font-size: 1.5rem;
+        }
+
+        .upload-section p {
+            color: #666;
+            margin-bottom: 1rem;
+        }
+
+        #imageInput {
+            display: none;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 1rem 2rem;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            color: #555;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .image-preview {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-top: 1.5rem;
+        }
+
+        .image-preview-item {
+            position: relative;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .image-preview-item img {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+        }
+
+        .image-preview-item .remove-btn {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            background: rgba(255, 0, 0, 0.8);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 28px;
+            height: 28px;
+            font-size: 1.2rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+
+        .image-preview-item .remove-btn:hover {
+            background: rgba(255, 0, 0, 1);
+            transform: scale(1.1);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 3rem;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .results {
+            margin-top: 2rem;
+        }
+
+        .result-section {
+            margin-bottom: 2rem;
+        }
+
+        .result-section h3 {
+            color: #667eea;
+            margin-bottom: 1rem;
+            font-size: 1.3rem;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 0.5rem;
+        }
+
+        .metric-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .metric-box {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            padding: 1.5rem;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .metric-box .label {
+            font-size: 0.9rem;
+            color: #666;
+            margin-bottom: 0.5rem;
+        }
+
+        .metric-box .value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .pattern-list, .insight-list, .action-list {
+            list-style: none;
+        }
+
+        .pattern-list li, .insight-list li, .action-list li {
+            background: #f8f9ff;
+            padding: 1rem;
+            margin-bottom: 0.75rem;
+            border-left: 4px solid #667eea;
+            border-radius: 4px;
+        }
+
+        .action-item {
+            background: #fff8f0;
+            border-left-color: #ff9800;
+            padding: 1.5rem;
+        }
+
+        .action-item strong {
+            color: #ff9800;
+            display: block;
+            margin-bottom: 0.5rem;
+        }
+
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 1.5rem;
+            border-radius: 8px;
+            border-left: 4px solid #c62828;
+        }
+
+        .success {
+            background: #e8f5e9;
+            color: #2e7d32;
+            padding: 1.5rem;
+            border-radius: 8px;
+            border-left: 4px solid #2e7d32;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 Prediction Image Analyzer</h1>
+            <p>YOLO validation prediction görüntülerinizi analiz edin ve detaylı AI yorumları alın</p>
+        </div>
+
+        <div class="card">
+            <div class="upload-section" id="uploadSection">
+                <div class="upload-icon">📸</div>
+                <h2>Validation Prediction Görüntülerini Yükleyin</h2>
+                <p>val_batch_pred.jpg, val_batch0_pred.jpg gibi dosyaları sürükleyip bırakın veya tıklayın</p>
+                <button class="btn" onclick="document.getElementById('imageInput').click()">
+                    Görüntü Seç
+                </button>
+                <input type="file" id="imageInput" accept="image/*" multiple>
+            </div>
+
+            <div id="imagePreview" class="image-preview"></div>
+
+            <div id="modelInfoForm" style="display: none; margin-top: 2rem;">
+                <h3 style="margin-bottom: 1rem; color: #667eea;">Model Bilgileri (Opsiyonel)</h3>
+                <div class="form-group">
+                    <label>Model Adı</label>
+                    <input type="text" id="modelName" placeholder="ör: YOLO11L-640">
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
+                    <div class="form-group">
+                        <label>Precision</label>
+                        <input type="number" id="precision" step="0.01" min="0" max="1" placeholder="0.85">
+                    </div>
+                    <div class="form-group">
+                        <label>Recall</label>
+                        <input type="number" id="recall" step="0.01" min="0" max="1" placeholder="0.78">
+                    </div>
+                    <div class="form-group">
+                        <label>mAP@0.5</label>
+                        <input type="number" id="map50" step="0.01" min="0" max="1" placeholder="0.82">
+                    </div>
+                </div>
+
+                <button class="btn" id="analyzeBtn" style="margin-top: 1rem; width: 100%;">
+                    🚀 Analizi Başlat
+                </button>
+            </div>
+        </div>
+
+        <div id="loadingSection" style="display: none;" class="card">
+            <div class="loading">
+                <div class="spinner"></div>
+                <h3>Görüntüler analiz ediliyor...</h3>
+                <p>Claude AI görüntülerinizi inceliyor ve detaylı yorumlar hazırlıyor. Bu birkaç dakika sürebilir.</p>
+            </div>
+        </div>
+
+        <div id="resultsSection" style="display: none;" class="card results">
+            <!-- Results will be inserted here -->
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000/api';
+        let selectedFiles = [];
+
+        const uploadSection = document.getElementById('uploadSection');
+        const imageInput = document.getElementById('imageInput');
+        const imagePreview = document.getElementById('imagePreview');
+        const modelInfoForm = document.getElementById('modelInfoForm');
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        const loadingSection = document.getElementById('loadingSection');
+        const resultsSection = document.getElementById('resultsSection');
+
+        // Drag and drop handlers
+        uploadSection.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadSection.classList.add('dragover');
+        });
+
+        uploadSection.addEventListener('dragleave', () => {
+            uploadSection.classList.remove('dragover');
+        });
+
+        uploadSection.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadSection.classList.remove('dragover');
+            const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+            handleFiles(files);
+        });
+
+        imageInput.addEventListener('change', (e) => {
+            const files = Array.from(e.target.files);
+            handleFiles(files);
+        });
+
+        function handleFiles(files) {
+            selectedFiles = files;
+            renderImagePreviews();
+            modelInfoForm.style.display = files.length > 0 ? 'block' : 'none';
+        }
+
+        function renderImagePreviews() {
+            imagePreview.innerHTML = '';
+            selectedFiles.forEach((file, index) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const div = document.createElement('div');
+                    div.className = 'image-preview-item';
+                    div.innerHTML = `
+                        <img src="${e.target.result}" alt="${file.name}">
+                        <button class="remove-btn" onclick="removeImage(${index})">&times;</button>
+                    `;
+                    imagePreview.appendChild(div);
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function removeImage(index) {
+            selectedFiles = selectedFiles.filter((_, i) => i !== index);
+            renderImagePreviews();
+            if (selectedFiles.length === 0) {
+                modelInfoForm.style.display = 'none';
+            }
+        }
+
+        analyzeBtn.addEventListener('click', async () => {
+            if (selectedFiles.length === 0) {
+                alert('Lütfen en az bir görüntü yükleyin!');
+                return;
+            }
+
+            const formData = new FormData();
+            selectedFiles.forEach(file => {
+                formData.append('prediction_images', file);
+            });
+
+            // Optional model info
+            const modelName = document.getElementById('modelName').value;
+            const precision = document.getElementById('precision').value;
+            const recall = document.getElementById('recall').value;
+            const map50 = document.getElementById('map50').value;
+
+            if (modelName) formData.append('model_name', modelName);
+            if (precision) formData.append('precision', precision);
+            if (recall) formData.append('recall', recall);
+            if (map50) formData.append('map50', map50);
+            formData.append('llm_provider', 'claude');
+
+            // Show loading
+            loadingSection.style.display = 'block';
+            resultsSection.style.display = 'none';
+            analyzeBtn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_BASE}/analyze/predictions`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Analiz başarısız oldu');
+                }
+
+                displayResults(data.analysis);
+            } catch (error) {
+                console.error('Error:', error);
+                resultsSection.innerHTML = `
+                    <div class="error">
+                        <h3>❌ Hata</h3>
+                        <p>${error.message}</p>
+                        <p style="margin-top: 0.5rem; font-size: 0.9rem;">
+                            Lütfen backend servisinin çalıştığından ve CLAUDE_API_KEY'in tanımlı olduğundan emin olun.
+                        </p>
+                    </div>
+                `;
+                resultsSection.style.display = 'block';
+            } finally {
+                loadingSection.style.display = 'none';
+                analyzeBtn.disabled = false;
+            }
+        });
+
+        function displayResults(analysis) {
+            const fn = analysis.false_negatives || {};
+            const fp = analysis.false_positives || {};
+            const conf = analysis.confidence_analysis || {};
+            const dataStrategy = analysis.data_collection_strategy || {};
+            const actions = analysis.action_items || [];
+            const insights = analysis.insights || [];
+
+            let html = `
+                <div class="success">
+                    <h3>✅ Analiz Tamamlandı</h3>
+                    <p>${analysis.summary || 'Görüntüler başarıyla analiz edildi.'}</p>
+                </div>
+
+                <div class="result-section">
+                    <h3>📊 Genel Metrikler</h3>
+                    <div class="metric-grid">
+                        <div class="metric-box">
+                            <div class="label">False Negatives</div>
+                            <div class="value">${fn.count || 0}</div>
+                        </div>
+                        <div class="metric-box">
+                            <div class="label">False Positives</div>
+                            <div class="value">${fp.count || 0}</div>
+                        </div>
+                        ${conf.true_positives_avg ? `
+                        <div class="metric-box">
+                            <div class="label">TP Avg Confidence</div>
+                            <div class="value">${(conf.true_positives_avg * 100).toFixed(1)}%</div>
+                        </div>
+                        ` : ''}
+                        ${conf.false_positives_avg ? `
+                        <div class="metric-box">
+                            <div class="label">FP Avg Confidence</div>
+                            <div class="value">${(conf.false_positives_avg * 100).toFixed(1)}%</div>
+                        </div>
+                        ` : ''}
+                    </div>
+                </div>
+
+                ${fn.patterns && fn.patterns.length > 0 ? `
+                <div class="result-section">
+                    <h3>🔴 False Negatives (Kaçırılan Tespitler)</h3>
+                    <ul class="pattern-list">
+                        ${fn.patterns.map(p => `<li>${p}</li>`).join('')}
+                    </ul>
+                    ${fn.size_distribution ? `<p><strong>Boyut Dağılımı:</strong> ${fn.size_distribution}</p>` : ''}
+                    ${fn.location_distribution ? `<p><strong>Konum Dağılımı:</strong> ${fn.location_distribution}</p>` : ''}
+                    ${fn.lighting_conditions ? `<p><strong>Işık Koşulları:</strong> ${fn.lighting_conditions}</p>` : ''}
+                </div>
+                ` : ''}
+
+                ${fp.patterns && fp.patterns.length > 0 ? `
+                <div class="result-section">
+                    <h3>🟡 False Positives (Yanlış Tespitler)</h3>
+                    <ul class="pattern-list">
+                        ${fp.patterns.map(p => `<li>${p}</li>`).join('')}
+                    </ul>
+                    ${fp.confidence_range ? `<p><strong>Confidence Aralığı:</strong> ${fp.confidence_range}</p>` : ''}
+                    ${fp.common_mistakes && fp.common_mistakes.length > 0 ? `
+                    <p><strong>Yaygın Hatalar:</strong></p>
+                    <ul class="pattern-list">
+                        ${fp.common_mistakes.map(m => `<li>${m}</li>`).join('')}
+                    </ul>
+                    ` : ''}
+                </div>
+                ` : ''}
+
+                ${conf.threshold_recommendation ? `
+                <div class="result-section">
+                    <h3>⚙️ Threshold Önerisi</h3>
+                    <p>${conf.threshold_recommendation}</p>
+                </div>
+                ` : ''}
+
+                ${dataStrategy.hard_negatives_needed || dataStrategy.hard_positives_needed ? `
+                <div class="result-section">
+                    <h3>📦 Veri Toplama Stratejisi</h3>
+                    ${dataStrategy.hard_negatives_needed ? `
+                    <div style="margin-bottom: 1.5rem;">
+                        <h4 style="color: #ff9800; margin-bottom: 0.5rem;">Zor Negatif Örnekler (Hard Negatives)</h4>
+                        <p><strong>Açıklama:</strong> ${dataStrategy.hard_negatives_needed.description}</p>
+                        <p><strong>Miktar:</strong> ${dataStrategy.hard_negatives_needed.quantity} adet</p>
+                        ${dataStrategy.hard_negatives_needed.characteristics ? `
+                        <p><strong>Özellikler:</strong></p>
+                        <ul class="pattern-list">
+                            ${dataStrategy.hard_negatives_needed.characteristics.map(c => `<li>${c}</li>`).join('')}
+                        </ul>
+                        ` : ''}
+                    </div>
+                    ` : ''}
+                    ${dataStrategy.hard_positives_needed ? `
+                    <div style="margin-bottom: 1.5rem;">
+                        <h4 style="color: #2196f3; margin-bottom: 0.5rem;">Zor Pozitif Örnekler (Hard Positives)</h4>
+                        <p><strong>Açıklama:</strong> ${dataStrategy.hard_positives_needed.description}</p>
+                        <p><strong>Miktar:</strong> ${dataStrategy.hard_positives_needed.quantity} adet</p>
+                        ${dataStrategy.hard_positives_needed.characteristics ? `
+                        <p><strong>Özellikler:</strong></p>
+                        <ul class="pattern-list">
+                            ${dataStrategy.hard_positives_needed.characteristics.map(c => `<li>${c}</li>`).join('')}
+                        </ul>
+                        ` : ''}
+                    </div>
+                    ` : ''}
+                    ${dataStrategy.expected_improvement ? `
+                    <p style="background: #e8f5e9; padding: 1rem; border-radius: 8px; border-left: 4px solid #4caf50;">
+                        <strong>Beklenen İyileşme:</strong> ${dataStrategy.expected_improvement}
+                    </p>
+                    ` : ''}
+                </div>
+                ` : ''}
+
+                ${actions.length > 0 ? `
+                <div class="result-section">
+                    <h3>🎯 Aksiyon Önerileri</h3>
+                    <ul class="action-list">
+                        ${actions.map(action => `
+                        <li class="action-item">
+                            <strong>${action.module || 'Genel'}</strong>
+                            <p><strong>Sorun:</strong> ${action.problem || 'N/A'}</p>
+                            <p><strong>Kanıt:</strong> ${action.evidence || 'N/A'}</p>
+                            <p><strong>Öneri:</strong> ${action.recommendation || 'N/A'}</p>
+                            <p><strong>Beklenen Kazanç:</strong> ${action.expected_gain || 'N/A'}</p>
+                            <p><strong>Doğrulama Planı:</strong> ${action.validation_plan || 'N/A'}</p>
+                        </li>
+                        `).join('')}
+                    </ul>
+                </div>
+                ` : ''}
+
+                ${insights.length > 0 ? `
+                <div class="result-section">
+                    <h3>💡 Detaylı İçgörüler</h3>
+                    <ul class="insight-list">
+                        ${insights.map(insight => `<li>${insight}</li>`).join('')}
+                    </ul>
+                </div>
+                ` : ''}
+            `;
+
+            resultsSection.innerHTML = html;
+            resultsSection.style.display = 'block';
+            resultsSection.scrollIntoView({ behavior: 'smooth' });
+        }
+    </script>
+</body>
+</html>

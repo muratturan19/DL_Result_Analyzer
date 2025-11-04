@@ -3,18 +3,21 @@
 
 from __future__ import annotations
 
+import base64
 import inspect
 import json
 import logging
 import os
 import re
-from typing import Any, Dict, List, Literal, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from anthropic import Anthropic
 from openai import OpenAI
 
 from app.prompts.analysis_prompt import DL_ANALYSIS_PROMPT
 from app.prompts.qa_prompt import QA_PROMPT
+from app.prompts.prediction_analysis_prompt import PREDICTION_ANALYSIS_PROMPT
 
 try:  # Anthropics specific error classes are optional in the runtime.
     from anthropic import APIConnectionError as AnthropicConnectionError
@@ -987,6 +990,156 @@ class LLMAnalyzer:
             len(raw_text),
         )
         return self._parse_qa_output(raw_text)
+
+    def analyze_prediction_images(
+        self,
+        image_paths: List[Union[str, Path]],
+        model_info: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Analyze validation prediction images for False Positives and False Negatives.
+
+        Args:
+            image_paths: List of paths to validation prediction images (val_batch*.jpg)
+            model_info: Optional dict with model metadata (name, metrics, etc.)
+
+        Returns:
+            Dict with detailed analysis of FN, FP, confidence scores, and data collection strategy
+        """
+        if not image_paths:
+            raise ValueError("At least one image path must be provided")
+
+        # Read and encode images
+        image_data_list: List[Dict[str, Any]] = []
+        for img_path in image_paths:
+            path = Path(img_path)
+            if not path.exists():
+                logger.warning("Image not found: %s", img_path)
+                continue
+
+            try:
+                with path.open('rb') as f:
+                    image_bytes = f.read()
+
+                # Detect image format
+                ext = path.suffix.lower()
+                if ext in ['.jpg', '.jpeg']:
+                    media_type = 'image/jpeg'
+                elif ext == '.png':
+                    media_type = 'image/png'
+                elif ext == '.webp':
+                    media_type = 'image/webp'
+                elif ext == '.gif':
+                    media_type = 'image/gif'
+                else:
+                    logger.warning("Unsupported image format: %s", ext)
+                    continue
+
+                # Encode to base64
+                base64_data = base64.b64encode(image_bytes).decode('utf-8')
+
+                image_data_list.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": base64_data,
+                    }
+                })
+                logger.info("Image encoded successfully: %s (%s)", path.name, media_type)
+            except Exception as e:
+                logger.exception("Failed to read/encode image: %s", img_path)
+                continue
+
+        if not image_data_list:
+            raise ValueError("No valid images could be loaded")
+
+        # Build context
+        model_context = ""
+        if model_info:
+            model_context = f"\n\nModel Bilgisi:\n{json.dumps(model_info, indent=2, ensure_ascii=False)}"
+
+        # For Claude, we need to send images in the content blocks
+        if self.provider == "claude":
+            return self._analyze_predictions_with_claude(image_data_list, model_context)
+        else:
+            # OpenAI Vision API could be used here too, but for now Claude only
+            logger.warning("Prediction image analysis is currently only supported with Claude provider")
+            raise NotImplementedError("Prediction analysis currently requires Claude provider")
+
+    def _analyze_predictions_with_claude(
+        self,
+        image_data_list: List[Dict[str, Any]],
+        model_context: str,
+    ) -> Dict[str, Any]:
+        """Use Claude's vision capability to analyze prediction images."""
+
+        system_instruction = (
+            "You are an expert AI engineer specializing in YOLO object detection and instance segmentation. "
+            "You will analyze validation prediction images and provide detailed insights about False Negatives, "
+            "False Positives, confidence distributions, and data collection strategies. "
+            "CRITICAL: Return PURE JSON ONLY - NO markdown, NO code blocks, NO ```json. "
+            "Start your response with { and end with }. "
+            "All text content must be in fluent Turkish."
+        )
+
+        # Build content blocks: text prompt + images
+        content_blocks: List[Dict[str, Any]] = []
+
+        # Add text prompt first
+        prompt_text = PREDICTION_ANALYSIS_PROMPT + model_context
+        content_blocks.append({
+            "type": "text",
+            "text": prompt_text,
+        })
+
+        # Add all images
+        content_blocks.extend(image_data_list)
+
+        try:
+            response = self.client.messages.create(
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=8192,  # Longer response for detailed analysis
+                temperature=0,
+                system=system_instruction,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": content_blocks,
+                    }
+                ],
+            )
+        except (TimeoutError, AnthropicConnectionError, AnthropicAPIError) as exc:
+            logger.exception("Claude prediction analysis request failed")
+            raise RuntimeError(f"Claude prediction analysis failed: {exc}") from exc
+
+        text_chunks = []
+        for block in getattr(response, "content", []):
+            if getattr(block, "type", "") == "text":
+                text_chunks.append(getattr(block, "text", ""))
+
+        raw_text = "".join(text_chunks).strip()
+        logger.debug(
+            "Claude prediction analysis response received (length=%s chars)",
+            len(raw_text),
+        )
+
+        # Parse the JSON response
+        try:
+            result = self._extract_json_payload(raw_text)
+            return result
+        except Exception as e:
+            logger.exception("Failed to parse prediction analysis response")
+            # Return a fallback response
+            return {
+                "summary": "Görüntü analizi yapılamadı.",
+                "false_negatives": {"count": 0, "patterns": []},
+                "false_positives": {"count": 0, "patterns": []},
+                "confidence_analysis": {},
+                "data_collection_strategy": {},
+                "action_items": [],
+                "insights": [],
+                "error": str(e),
+            }
 
     def _fallback_answer(
         self,
