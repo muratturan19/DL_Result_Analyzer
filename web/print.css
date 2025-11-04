@@ -1,0 +1,78 @@
+@page {
+  size: A4;
+  margin: 1.6cm 1.4cm 1.6cm 1.4cm;
+}
+
+html {
+  background: #ffffff !important;
+}
+
+body.report-body {
+  background: #ffffff !important;
+  color: #0f172a !important;
+  box-shadow: none !important;
+}
+
+.report-header {
+  background: none !important;
+  color: #0f172a !important;
+  padding-bottom: 1.2rem !important;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.12) !important;
+}
+
+.report-header::after {
+  display: none !important;
+}
+
+.report-shell,
+.report-container {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  box-shadow: none !important;
+}
+
+.section-card {
+  background: #ffffff !important;
+  border: 1px solid rgba(148, 163, 184, 0.35) !important;
+  box-shadow: none !important;
+  break-inside: avoid;
+}
+
+.section-card.elevated {
+  box-shadow: none !important;
+}
+
+.header-actions,
+[data-print-hidden],
+.btn,
+.collapsible-trigger svg {
+  display: none !important;
+}
+
+.collapsible {
+  border: 1px solid rgba(148, 163, 184, 0.35) !important;
+}
+
+.collapsible[open] .collapsible-content,
+.collapsible-content {
+  display: block !important;
+}
+
+.table-wrapper,
+.data-table,
+.stat-grid,
+.action-list,
+.qa-grid,
+.dataset-grid {
+  break-inside: avoid;
+}
+
+.status-chip,
+.risk-chip,
+.dataset-class {
+  border-color: rgba(15, 23, 42, 0.12) !important;
+}
+
+.report-footer {
+  color: #475569 !important;
+}
