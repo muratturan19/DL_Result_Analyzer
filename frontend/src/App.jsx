@@ -1359,6 +1359,30 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    console.log('=== DOSYA YÜKLEME BAŞLADI ===');
+    console.log('Timestamp:', new Date().toISOString());
+
+    // Log file details
+    const fileDetails = {
+      csv: files.csv ? { name: files.csv.name, size: files.csv.size, type: files.csv.type } : null,
+      yaml: files.yaml ? { name: files.yaml.name, size: files.yaml.size, type: files.yaml.type } : null,
+      best: files.best ? { name: files.best.name, size: files.best.size, type: files.best.type } : null,
+      graphs: files.graphs.map(g => ({ name: g.name, size: g.size, type: g.type })),
+      trainingCode: projectInfo.trainingCode ? { name: projectInfo.trainingCode.name, size: projectInfo.trainingCode.size } : null
+    };
+    console.log('Yüklenecek dosyalar:', fileDetails);
+
+    // Calculate total upload size
+    const totalSize = [
+      files.csv?.size || 0,
+      files.yaml?.size || 0,
+      files.best?.size || 0,
+      ...files.graphs.map(g => g.size),
+      projectInfo.trainingCode?.size || 0
+    ].reduce((sum, size) => sum + size, 0);
+    console.log('Toplam dosya boyutu:', (totalSize / 1024 / 1024).toFixed(2), 'MB');
+
     onUpload({ _loading: true });
 
     const formData = new FormData();
@@ -1387,15 +1411,56 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
       formData.append('training_code', projectInfo.trainingCode);
     }
 
+    const uploadStartTime = Date.now();
+    console.log('FormData hazırlandı, sunucuya gönderiliyor...');
+
     try {
+      console.log('Fetch isteği başlatılıyor: POST http://localhost:8000/api/upload/results');
+
       const response = await fetch('http://localhost:8000/api/upload/results', {
         method: 'POST',
         body: formData
       });
+
+      const uploadDuration = ((Date.now() - uploadStartTime) / 1000).toFixed(2);
+      console.log(`Sunucu yanıtı alındı (${uploadDuration}s)`);
+      console.log('Response status:', response.status, response.statusText);
+      console.log('Response headers:', Object.fromEntries(response.headers.entries()));
+
+      if (!response.ok) {
+        console.error('Sunucu hata yanıtı döndü:', response.status);
+        const errorText = await response.text();
+        console.error('Hata detayı:', errorText);
+        throw new Error(`Upload başarısız: ${response.status} ${response.statusText}`);
+      }
+
+      console.log('JSON yanıtı parse ediliyor...');
       const data = await response.json();
+      console.log('Yanıt başarıyla alındı:', {
+        status: data.status,
+        hasMetrics: !!data.metrics,
+        hasAnalysis: !!data.analysis,
+        hasConfig: !!data.config,
+        reportId: data.report_id
+      });
+      console.log('=== DOSYA YÜKLEME TAMAMLANDI ===\n');
+
       onUpload(data);
     } catch (error) {
-      console.error('Upload failed:', error);
+      const uploadDuration = ((Date.now() - uploadStartTime) / 1000).toFixed(2);
+      console.error('=== DOSYA YÜKLEME HATASI ===');
+      console.error('Süre:', uploadDuration, 'saniye');
+      console.error('Hata türü:', error.name);
+      console.error('Hata mesajı:', error.message);
+      console.error('Stack trace:', error.stack);
+
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        console.error('Network hatası: Sunucuya bağlanılamıyor. Backend çalışıyor mu?');
+      } else if (error.name === 'AbortError') {
+        console.error('İstek iptal edildi veya timeout oluştu');
+      }
+
+      console.error('=========================\n');
       onUpload({ error: error.message });
     }
   };
@@ -2126,7 +2191,10 @@ function App() {
   };
 
   const handleUpload = async (uploadResponse) => {
+    console.log('handleUpload çağrıldı:', uploadResponse ? Object.keys(uploadResponse) : 'null');
+
     if (!uploadResponse) {
+      console.log('Upload response boş, state sıfırlanıyor');
       setLoading(false);
       setLoadingStatus(null);
       setReportId(null);
@@ -2138,6 +2206,7 @@ function App() {
     }
 
     if (uploadResponse._loading) {
+      console.log('Loading durumu başlatılıyor (uploading status)');
       setLoading(true);
       setLoadingStatus('uploading');
       setError(null);
@@ -2150,6 +2219,7 @@ function App() {
     }
 
     if (uploadResponse.error) {
+      console.error('Upload response hata içeriyor:', uploadResponse.error);
       setError(uploadResponse.error);
       setLoading(false);
       setLoadingStatus('error');
@@ -2164,6 +2234,15 @@ function App() {
 
     const { metrics: responseMetrics, analysis: responseAnalysis, config: responseConfig, history: responseHistory } = uploadResponse;
 
+    console.log('Upload response yapısı:', {
+      hasMetrics: !!responseMetrics,
+      hasAnalysis: !!responseAnalysis,
+      hasConfig: !!responseConfig,
+      hasHistory: !!responseHistory,
+      reportId: uploadResponse.report_id,
+      hasFiles: !!uploadResponse.files
+    });
+
     setMetrics(responseMetrics || null);
     setHistory(responseHistory || null);
     setConfig(responseConfig || null);
@@ -2174,14 +2253,17 @@ function App() {
     setQaError(null);
     setQaLoading(false);
 
+    console.log('State güncellendi, parsing durumuna geçiliyor');
     setLoading(true);
     setLoadingStatus('parsing');
 
     if (uploadResponse.files) {
+      console.log('Artifact dosyaları kaydediliyor:', uploadResponse.files);
       setArtifacts({ server: uploadResponse.files });
     }
 
     if (responseAnalysis) {
+      console.log('Analiz zaten sunucu tarafında yapılmış, tamamlandı olarak işaretleniyor');
       setAnalysis(responseAnalysis);
       setLoading(false);
       setLoadingStatus('complete');
@@ -2190,6 +2272,7 @@ function App() {
     }
 
     if (!responseMetrics) {
+      console.warn('Response metrics bulunamadı, işlem sonlandırılıyor');
       setLoading(false);
       setLoadingStatus(null);
       return;
@@ -2208,26 +2291,45 @@ function App() {
       conf_threshold: toNumber(responseConfig?.conf, 0.5)
     };
 
+    console.log('Analyzing durumuna geçiliyor, metrics payload hazırlanıyor');
     setLoadingStatus('analyzing');
+
     try {
+      console.log('Metrics analizi için istek gönderiliyor:', metricsPayload);
+      const analysisStartTime = Date.now();
+
       const response = await fetch('http://localhost:8000/api/analyze/metrics', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(metricsPayload)
       });
+
+      const analysisDuration = ((Date.now() - analysisStartTime) / 1000).toFixed(2);
+      console.log(`Analiz yanıtı alındı (${analysisDuration}s), status:`, response.status);
+
       const responseData = await response.json().catch(() => ({}));
+
       if (!response.ok) {
         const message = responseData?.detail || 'Analiz isteği başarısız oldu.';
+        console.error('Analiz isteği başarısız:', message);
         throw new Error(Array.isArray(message) ? message[0]?.msg || 'Analiz isteği başarısız oldu.' : message);
       }
+
+      console.log('Analiz başarıyla tamamlandı');
       setAnalysis(responseData);
       setLoadingStatus('complete');
       setTimeout(() => {
+        console.log('Loading durumu temizleniyor');
         setLoading(false);
         setLoadingStatus(null);
       }, 1500);
     } catch (err) {
-      console.error('Analysis failed:', err);
+      console.error('=== ANALİZ HATASI ===');
+      console.error('Hata türü:', err.name);
+      console.error('Hata mesajı:', err.message);
+      console.error('Stack trace:', err.stack);
+      console.error('==================\n');
+
       setError(err.message || 'Analiz sırasında bir hata oluştu.');
       setLoadingStatus('error');
       setTimeout(() => {
