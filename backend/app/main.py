@@ -938,12 +938,14 @@ def _generate_pdf_report(report_id: str, context: Dict[str, Any]) -> bytes:
         for key, label in [
             ("precision", "Precision"),
             ("recall", "Recall"),
+            ("f1", "F1 Score"),
             ("map50", "mAP@0.5"),
+            ("map75", "mAP@0.75"),
             ("map50_95", "mAP@0.5:0.95"),
             ("loss", "Loss"),
         ]:
             value = metrics.get(key)
-            if key in {"precision", "recall", "map50", "map50_95"}:
+            if key in {"precision", "recall", "f1", "map50", "map75", "map50_95"}:
                 display = _format_percent(value)
             elif value is None:
                 display = "N/A"
