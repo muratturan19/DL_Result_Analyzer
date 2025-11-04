@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from string import Template
 from textwrap import wrap
 from threading import Lock
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from uuid import uuid4
 
 import yaml
@@ -43,6 +43,26 @@ MAX_TRAINING_CODE_CHARS = int(os.getenv("TRAINING_CODE_PREVIEW_CHARS", "4000"))
 
 PDF_FONT_REGULAR = "Helvetica"
 PDF_FONT_BOLD = "Helvetica-Bold"
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_WEB_DIR = _REPO_ROOT / "web"
+
+
+def _load_report_asset(filename: str) -> str:
+    asset_path = _WEB_DIR / filename
+    try:
+        return asset_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        logger.warning("Rapor varlık dosyası bulunamadı: %s", asset_path)
+    except OSError:
+        logger.warning("Rapor varlık dosyası okunamadı: %s", asset_path, exc_info=True)
+    return ""
+
+
+REPORT_THEME_CSS = _load_report_asset("report-theme.css")
+REPORT_PRINT_CSS = _load_report_asset("print.css")
+REPORT_UI_SCRIPT = _load_report_asset("report-ui.js")
+REPORT_ICONS_SVG = _load_report_asset("icons.svg")
 
 _FONT_DIR = Path(__file__).resolve().parent / "static" / "fonts"
 
@@ -306,39 +326,89 @@ def _format_percent(value: Optional[float]) -> str:
         return "N/A"
 
 
-def _build_metrics_html(metrics: Dict[str, Any]) -> str:
-    rows = []
-    display_map = {
-        "precision": "Precision",
-        "recall": "Recall",
-        "map50": "mAP@0.5",
-        "map50_95": "mAP@0.5:0.95",
-        "loss": "Loss",
-    }
-    for key, label in display_map.items():
-        value = metrics.get(key)
-        if key in {"precision", "recall", "map50", "map50_95"}:
-            formatted = _format_percent(value)
-        elif value is None:
-            formatted = "N/A"
+def _format_metric_value(value: Any, as_percent: bool) -> Tuple[str, Optional[float]]:
+    if value is None:
+        return "N/A", None
+
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if not cleaned:
+            return "N/A", None
+        percent_string = cleaned.endswith("%")
+        numeric_candidate = cleaned.rstrip("% ").replace(",", ".")
+        try:
+            numeric = float(numeric_candidate)
+        except (TypeError, ValueError):
+            return escape(cleaned), None
+        if as_percent:
+            raw_value = numeric / 100 if percent_string else numeric
+            display = f"{numeric:.2f}%" if percent_string else f"{raw_value * 100:.2f}%"
         else:
-            formatted = f"{value:.4f}" if isinstance(value, (float, int)) else escape(str(value))
-        rows.append(f"<tr><th>{escape(label)}</th><td>{formatted}</td></tr>")
-    return "\n".join(rows)
+            raw_value = numeric
+            display = f"{numeric:.4f}".rstrip("0").rstrip(".") or f"{numeric:.4f}"
+        return display, raw_value
+
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return escape(str(value)), None
+
+    if as_percent:
+        display = f"{numeric_value * 100:.2f}%"
+        return display, numeric_value
+
+    display = f"{numeric_value:.4f}".rstrip("0").rstrip(".") or f"{numeric_value:.4f}"
+    return display, numeric_value
+
+
+def _build_metrics_html(metrics: Dict[str, Any]) -> str:
+    cards: List[str] = []
+    metric_definitions = [
+        ("precision", "Precision", True),
+        ("recall", "Recall", True),
+        ("f1", "F1 Score", True),
+        ("map50", "mAP@0.5", True),
+        ("map75", "mAP@0.75", True),
+        ("map50_95", "mAP@0.5:0.95", True),
+        ("loss", "Loss", False),
+    ]
+
+    for key, label, as_percent in metric_definitions:
+        display, raw_value = _format_metric_value(metrics.get(key), as_percent)
+        raw_attr = "NaN" if raw_value is None else f"{raw_value:.6f}"
+        cards.append(
+            """
+            <div class=\"stat-card\" data-metric-card data-metric=\"{metric}\" data-label=\"{label}\" data-raw=\"{raw}\">
+                <span class=\"stat-label\">{label}</span>
+                <span class=\"stat-value\">{display}</span>
+                <span class=\"status-chip\" data-status-text>Durum değerlendiriliyor</span>
+            </div>
+            """.strip().format(
+                metric=escape(key),
+                label=escape(label),
+                raw=raw_attr,
+                display=display,
+            )
+        )
+
+    if not cards:
+        return "<p class=\"empty-state\">Metrik bilgisi bulunamadı.</p>"
+
+    return "\n".join(cards)
 
 
 def _build_list_html(items: List[str]) -> str:
     if not items:
-        return "<p>Bilgi bulunamadı.</p>"
+        return "<p class=\"text-muted\">Bilgi bulunamadı.</p>"
     escaped_items = "".join(f"<li>{escape(item)}</li>" for item in items if item)
-    return f"<ul>{escaped_items}</ul>" if escaped_items else "<p>Bilgi bulunamadı.</p>"
+    return f"<ul class=\"bullet-list\">{escaped_items}</ul>" if escaped_items else "<p class=\"text-muted\">Bilgi bulunamadı.</p>"
 
 
 def _build_actions_html(actions: List[Dict[str, Any]]) -> str:
     if not actions:
-        return "<p>Aksiyon önerisi bulunamadı.</p>"
+        return "<p class=\"empty-state\">Aksiyon önerisi bulunamadı.</p>"
 
-    action_items = []
+    action_items: List[str] = []
     for action in actions:
         module = escape(str(action.get("module", ""))) if action.get("module") else "Genel"
         recommendation = escape(str(action.get("recommendation", "")))
@@ -346,24 +416,40 @@ def _build_actions_html(actions: List[Dict[str, Any]]) -> str:
         expected = escape(str(action.get("expected_gain", "")))
         validation = escape(str(action.get("validation_plan", "")))
 
-        detail_parts = [f"<strong>Modül:</strong> {module}"]
-        if evidence:
-            detail_parts.append(f"<strong>Kanıt:</strong> {evidence}")
+        meta_lines: List[str] = []
         if recommendation:
-            detail_parts.append(f"<strong>Öneri:</strong> {recommendation}")
+            meta_lines.append(f"<div><strong>Öneri:</strong> {recommendation}</div>")
+        if evidence:
+            meta_lines.append(f"<div><strong>Kanıt:</strong> {evidence}</div>")
         if expected:
-            detail_parts.append(f"<strong>Beklenen Kazanç:</strong> {expected}")
+            meta_lines.append(f"<div><strong>Beklenen Kazanç:</strong> {expected}</div>")
         if validation:
-            detail_parts.append(f"<strong>Doğrulama Planı:</strong> {validation}")
+            meta_lines.append(f"<div><strong>Doğrulama Planı:</strong> {validation}</div>")
 
-        action_items.append(f"<li><div class=\"action-item\">{'<br/>'.join(detail_parts)}</div></li>")
+        action_items.append(
+            """
+            <li>
+                <article class=\"action-card\">
+                    <div>
+                        <span class=\"chip\">
+                            <svg aria-hidden=\"true\"><use href=\"#icon-info\" xlink:href=\"#icon-info\"></use></svg>
+                            {module}
+                        </span>
+                    </div>
+                    <div class=\"action-meta\">
+                        {meta}
+                    </div>
+                </article>
+            </li>
+            """.strip().format(module=module, meta="".join(meta_lines) or "<div>Detay belirtilmedi.</div>")
+        )
 
     return f"<ul class=\"action-list\">{''.join(action_items)}</ul>"
 
 
 def _build_dataset_summary(dataset: Dict[str, Any]) -> str:
     if not dataset:
-        return ""
+        return "<p class=\"text-muted\">Veri seti bilgisi bulunamadı.</p>"
 
     count_map = [
         ("Eğitim", dataset.get("train_images")),
@@ -372,7 +458,7 @@ def _build_dataset_summary(dataset: Dict[str, Any]) -> str:
         ("Toplam", dataset.get("total_images")),
     ]
 
-    count_items = []
+    count_items: List[str] = []
     for label, value in count_map:
         if value is None:
             continue
@@ -381,21 +467,178 @@ def _build_dataset_summary(dataset: Dict[str, Any]) -> str:
             display = f"{int(numeric):,}".replace(",", ".")
         except (TypeError, ValueError):
             display = escape(str(value))
-        count_items.append(f"<div class=\"dataset-count\"><span>{escape(label)}</span><strong>{display}</strong></div>")
+        count_items.append(
+            """
+            <div class=\"dataset-card\">
+                <span class=\"dataset-label\">{label}</span>
+                <span class=\"dataset-value\">{display}</span>
+            </div>
+            """.strip().format(label=escape(label), display=display)
+        )
 
     classes = dataset.get("class_names")
     class_items = ""
     if isinstance(classes, list) and classes:
-        chips = "".join(f"<span class=\"dataset-chip\">{escape(str(item))}</span>" for item in classes)
-        class_items = f"<div class=\"dataset-classes\"><span>Sınıflar:</span>{chips}</div>"
+        chips = "".join(
+            f"<span class=\"dataset-class\" role=\"listitem\">{escape(str(item))}</span>"
+            for item in classes
+            if item
+        )
+        if chips:
+            class_items = f"<div class=\"dataset-classes\" role=\"list\">{chips}</div>"
 
-    parts = []
+    parts: List[str] = []
     if count_items:
-        parts.append(f"<div class=\"dataset-counts\">{''.join(count_items)}</div>")
+        parts.append(f"<div class=\"dataset-grid\">{''.join(count_items)}</div>")
     if class_items:
         parts.append(class_items)
 
-    return "".join(parts)
+    return "".join(parts) if parts else "<p class=\"text-muted\">Veri seti bilgisi bulunamadı.</p>"
+
+
+def _normalize_risk_details(raw_value: Any) -> List[str]:
+    if not raw_value:
+        return []
+
+    if isinstance(raw_value, str):
+        cleaned = raw_value.strip()
+        if not cleaned:
+            return []
+        try:
+            parsed = json.loads(cleaned)
+        except json.JSONDecodeError:
+            tokens = [token.strip() for token in re.split(r"[\n;,]+", cleaned) if token.strip()]
+            return tokens or [cleaned]
+        else:
+            raw_value = parsed
+
+    if isinstance(raw_value, dict):
+        items: List[str] = []
+        for key, value in raw_value.items():
+            key_str = str(key).strip()
+            value_str = str(value).strip()
+            if key_str and value_str:
+                items.append(f"{key_str}: {value_str}")
+            elif key_str:
+                items.append(key_str)
+            elif value_str:
+                items.append(value_str)
+        return items
+
+    if isinstance(raw_value, (list, tuple, set)):
+        return [str(item).strip() for item in raw_value if str(item).strip()]
+
+    return [str(raw_value)]
+
+
+def _risk_icon_href(level: str) -> str:
+    if level == "low":
+        return "#icon-success"
+    if level in {"medium", "moderate"}:
+        return "#icon-warning"
+    if level in {"high", "critical"}:
+        return "#icon-warning"
+    return "#icon-info"
+
+
+def _build_risk_chips(analysis: Dict[str, Any]) -> str:
+    risk_value = analysis.get("risk") or analysis.get("risk_level")
+    level_key = ""
+    chips: List[str] = []
+
+    if isinstance(risk_value, str):
+        normalized = risk_value.strip().lower()
+        if normalized in {"low", "medium", "moderate", "high", "critical"}:
+            level_key = "critical" if normalized == "high" else normalized
+            label_map = {
+                "low": "Düşük risk",
+                "medium": "Orta risk",
+                "moderate": "Orta risk",
+                "high": "Yüksek risk",
+                "critical": "Kritik risk",
+            }
+            chips.append(
+                """
+                <span class=\"risk-chip\" data-level=\"{level}\">
+                    <svg aria-hidden=\"true\"><use href=\"{icon}\" xlink:href=\"{icon}\"></use></svg>
+                    <span>{label}</span>
+                </span>
+                """.strip().format(
+                    level=escape(level_key),
+                    label=escape(label_map.get(level_key, risk_value)),
+                    icon=_risk_icon_href(level_key),
+                )
+            )
+        elif normalized:
+            chips.append(
+                """
+                <span class=\"risk-chip\" data-level=\"medium\">
+                    <svg aria-hidden=\"true\"><use href=\"#icon-warning\" xlink:href=\"#icon-warning\"></use></svg>
+                    <span>{label}</span>
+                </span>
+                """.strip().format(label=escape(risk_value.strip()))
+            )
+    elif risk_value:
+        chips.append(
+            """
+            <span class=\"risk-chip\" data-level=\"medium\">
+                <svg aria-hidden=\"true\"><use href=\"#icon-warning\" xlink:href=\"#icon-warning\"></use></svg>
+                <span>{label}</span>
+            </span>
+            """.strip().format(label=escape(str(risk_value)))
+        )
+
+    risk_details = (
+        analysis.get("risk_details")
+        or analysis.get("risk_factors")
+        or analysis.get("risk_reasons")
+        or analysis.get("risk_notes")
+    )
+
+    for item in _normalize_risk_details(risk_details):
+        chips.append(
+            """
+            <span class=\"risk-chip\" data-level=\"medium\">
+                <svg aria-hidden=\"true\"><use href=\"#icon-warning\" xlink:href=\"#icon-warning\"></use></svg>
+                <span>{label}</span>
+            </span>
+            """.strip().format(label=escape(item))
+        )
+
+    if not chips:
+        return "<p class=\"text-muted\">Risk verisi paylaşılmadı.</p>"
+
+    return f"<div class=\"risk-chips\">{''.join(chips)}</div>"
+
+
+def _build_deploy_profile_html(deploy_profile: Any) -> str:
+    if not deploy_profile:
+        return "<p class=\"empty-state\">Bilgi bulunamadı.</p>"
+
+    if isinstance(deploy_profile, dict):
+        rows = []
+        for key, value in deploy_profile.items():
+            rows.append(
+                """
+                <tr>
+                    <th scope=\"row\">{key}</th>
+                    <td>{value}</td>
+                </tr>
+                """.strip().format(key=escape(str(key)), value=escape(str(value)))
+            )
+        return f"<div class=\"table-wrapper\"><table class=\"data-table\"><tbody>{''.join(rows)}</tbody></table></div>"
+
+    if isinstance(deploy_profile, list):
+        entries: List[str] = []
+        for item in deploy_profile:
+            if isinstance(item, dict):
+                pieces = [f"{str(k)}: {str(v)}" for k, v in item.items() if v is not None]
+                entries.append("; ".join(pieces) if pieces else str(item))
+            else:
+                entries.append(str(item))
+        return _build_list_html([entry for entry in entries if entry])
+
+    return f"<p>{escape(str(deploy_profile))}</p>"
 
 
 def _generate_html_report(report_id: str, context: Dict[str, Any]) -> str:
@@ -413,37 +656,38 @@ def _generate_html_report(report_id: str, context: Dict[str, Any]) -> str:
     weaknesses_html = _build_list_html(analysis.get("weaknesses", []))
     actions_html = _build_actions_html(analysis.get("actions", []))
 
-    risk = analysis.get("risk")
-    risk_display = escape(str(risk)).upper() if risk else "BİLİNMİYOR"
-
-    deploy_profile = analysis.get("deploy_profile", {}) or {}
-    deploy_items = "".join(
-        f"<li><strong>{escape(str(key))}:</strong> {escape(str(value))}</li>" for key, value in deploy_profile.items()
-    )
+    risk_section = _build_risk_chips(analysis)
+    deploy_html = _build_deploy_profile_html(analysis.get("deploy_profile"))
 
     qa_history = context.get("qa_history", []) or []
-    qa_items = []
+    qa_items: List[str] = []
     for entry in qa_history[-5:][::-1]:
         question = escape(str(entry.get("question", "")))
         answer = escape(str(entry.get("answer", "")))
         timestamp = escape(str(entry.get("timestamp", "")))
         qa_items.append(
-            f"<div class=\"qa-entry\"><div class=\"qa-question\"><strong>Soru:</strong> {question}</div>"
-            f"<div class=\"qa-answer\"><strong>Yanıt:</strong> {answer}</div>"
-            f"<div class=\"qa-timestamp\">{timestamp}</div></div>"
+            """
+            <article class=\"qa-card\">
+                <div class=\"qa-question\">{question}</div>
+                <div class=\"qa-answer\">{answer}</div>
+                <div class=\"qa-timestamp\">{timestamp}</div>
+            </article>
+            """.strip().format(question=question, answer=answer, timestamp=timestamp)
         )
 
-    deploy_html = f"<ul>{deploy_items}</ul>" if deploy_items else "<p>Bilgi bulunamadı.</p>"
-    qa_history_html = "".join(qa_items) if qa_items else "<p>Henüz takip sorusu yok.</p>"
-
-    summary_text = escape(str(analysis.get("summary", ""))) if analysis.get("summary") else "Henüz özet oluşturulmadı."
-    notes = analysis.get("notes") or analysis.get("error")
-    notes_html = escape(str(notes)) if notes else ""
+    qa_history_html = "".join(qa_items) if qa_items else "<p class=\"empty-state\">Henüz takip sorusu yok.</p>"
+    summary_text = (
+        escape(str(analysis.get("summary"))) if analysis.get("summary") else "Henüz özet oluşturulmadı."
+    )
+    notes_text = analysis.get("notes") or analysis.get("error")
 
     dataset_section_html = (
         f"""
-        <section>
-            <h2>🗂️ Veri Seti Özeti</h2>
+        <section class=\"section-card\" aria-labelledby=\"dataset-heading\">
+            <div class=\"section-heading\">
+                <h2 id=\"dataset-heading\">Veri Seti Özeti</h2>
+                <p>Veri bölümlerinin dağılımı ve sınıf yapısı.</p>
+            </div>
             {dataset_section}
         </section>
         """
@@ -452,120 +696,177 @@ def _generate_html_report(report_id: str, context: Dict[str, Any]) -> str:
     )
 
     analysis_lists_html = f"""
-            <div class=\"analysis-grid\">
-                <div>
-                    <h3>Güçlü Yönler</h3>
+        <div class=\"section-block\">
+            <div class=\"collapsible\" data-collapsible data-open>
+                <button type=\"button\" class=\"collapsible-trigger\" data-collapsible-trigger>
+                    <span>Güçlü yönler</span>
+                    <svg aria-hidden=\"true\"><use href=\"#icon-chevron\" xlink:href=\"#icon-chevron\"></use></svg>
+                </button>
+                <div class=\"collapsible-content\" data-collapsible-content>
                     {strengths_html}
                 </div>
-                <div>
-                    <h3>Zayıf Yönler</h3>
+            </div>
+            <div class=\"collapsible\" data-collapsible>
+                <button type=\"button\" class=\"collapsible-trigger\" data-collapsible-trigger>
+                    <span>Geliştirilmesi gerekenler</span>
+                    <svg aria-hidden=\"true\"><use href=\"#icon-chevron\" xlink:href=\"#icon-chevron\"></use></svg>
+                </button>
+                <div class=\"collapsible-content\" data-collapsible-content>
                     {weaknesses_html}
                 </div>
             </div>
+        </div>
     """
 
-    notes_block = (
-        f"""
-            <div>
-                <h3>📝 Notlar</h3>
-                <p>{notes_html}</p>
+    notes_block = ""
+    if notes_text:
+        notes_block = """
+        <div class=\"section-block\">
+            <div class=\"collapsible\" data-collapsible data-open>
+                <button type=\"button\" class=\"collapsible-trigger\" data-collapsible-trigger>
+                    <span>Notlar</span>
+                    <svg aria-hidden=\"true\"><use href=\"#icon-chevron\" xlink:href=\"#icon-chevron\"></use></svg>
+                </button>
+                <div class=\"collapsible-content\" data-collapsible-content>
+                    <p>{notes}</p>
+                </div>
             </div>
-        """
-        if notes_html
-        else ""
-    )
+        </div>
+        """.format(notes=escape(str(notes_text)))
+
+    page_title = f"{project_name} - DL Result Analyzer"
 
     template = Template(
         """<!DOCTYPE html>
-<html lang=\"tr\">
+<html lang=\"tr\" data-theme=\"dark\">
 <head>
     <meta charset=\"utf-8\" />
-    <title>DL Result Analyzer - Rapor</title>
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+    <title>$page_title</title>
+    <script>
+      window.tailwind = window.tailwind || {};
+      tailwind.config = {
+        darkMode: ['class', '[data-theme="dark"]'],
+        theme: {
+          extend: {
+            colors: {
+              primary: '#6366f1',
+              accent: '#22d3ee',
+              slate: '#0f172a'
+            }
+          }
+        },
+        corePlugins: {
+          preflight: false
+        }
+      };
+    </script>
+    <script src=\"https://cdn.tailwindcss.com\" defer></script>
     <style>
-        body { font-family: 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; background: #f3f4f6; color: #111827; }
-        header { background: linear-gradient(135deg, #312e81, #6366f1); color: white; padding: 32px; }
-        header h1 { margin: 0 0 8px; font-size: 28px; }
-        header p { margin: 0; font-size: 14px; opacity: 0.85; }
-        main { padding: 32px; }
-        section { background: white; border-radius: 16px; padding: 24px; margin-bottom: 24px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08); }
-        h2 { margin-top: 0; font-size: 22px; color: #1f2937; }
-        table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-        th, td { padding: 12px 16px; text-align: left; }
-        th { background: #eef2ff; font-weight: 600; width: 220px; }
-        tr:nth-child(even) td { background: #f9fafb; }
-        ul { margin: 12px 0; padding-left: 20px; }
-        .dataset-counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-top: 16px; }
-        .dataset-count { background: #eef2ff; border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 4px; }
-        .dataset-count span { font-size: 12px; color: #4f46e5; text-transform: uppercase; letter-spacing: 0.05em; }
-        .dataset-count strong { font-size: 20px; }
-        .dataset-classes { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-        .dataset-classes span { font-weight: 600; color: #1f2937; }
-        .dataset-chip { background: #f3f4f6; padding: 6px 12px; border-radius: 999px; font-size: 13px; }
-        .analysis-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 24px; }
-        .qa-entry { background: #f9fafb; border-radius: 12px; padding: 16px; margin-bottom: 12px; border: 1px solid #e5e7eb; }
-        .qa-question { font-weight: 600; margin-bottom: 8px; }
-        .qa-answer { margin-bottom: 6px; }
-        .qa-timestamp { font-size: 12px; color: #6b7280; }
-        .risk-chip { display: inline-block; padding: 6px 12px; border-radius: 999px; background: #f97316; color: white; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
-        .action-list { list-style: none; padding: 0; margin: 12px 0 0; display: flex; flex-direction: column; gap: 12px; }
-        .action-item { background: #f9fafb; padding: 14px; border-radius: 12px; border: 1px solid #e5e7eb; }
-        footer { text-align: center; padding: 24px; color: #6b7280; font-size: 12px; }
+$theme_css
+    </style>
+    <style media=\"print\">
+$print_css
     </style>
 </head>
-<body>
-    <header>
-        <h1>$project_name</h1>
-        <p>Rapor ID: $report_id • Oluşturulma: $generated_at</p>
+<body class=\"report-body\">
+$icons_svg
+    <header class=\"report-header\">
+        <div class=\"report-shell\">
+            <div class=\"report-meta\">
+                <h1>$project_name</h1>
+                <p>Rapor ID: $report_id</p>
+                <div class=\"section-meta\">
+                    <span>Oluşturulma: $generated_at</span>
+                </div>
+            </div>
+            <div class=\"header-actions\" data-print-hidden>
+                <button class=\"btn btn-primary\" type=\"button\" data-theme-toggle aria-label=\"Temayı değiştir\">
+                    <svg aria-hidden=\"true\"><use href=\"#icon-moon\" xlink:href=\"#icon-moon\"></use></svg>
+                    <span data-theme-toggle-label>Koyu tema</span>
+                </button>
+                <button class=\"btn btn-outline\" type=\"button\" data-print-report aria-label=\"Raporu yazdır\">
+                    <svg aria-hidden=\"true\"><use href=\"#icon-external\" xlink:href=\"#icon-external\"></use></svg>
+                    <span>Yazdır</span>
+                </button>
+            </div>
+        </div>
     </header>
-    <main>
-        <section>
-            <h2>📊 Metrik Özeti</h2>
-            <table>
-                <tbody>
+    <main class=\"report-main\">
+        <div class=\"report-container\">
+            <section class=\"section-card elevated\" aria-labelledby=\"metrics-heading\">
+                <div class=\"section-heading\">
+                    <h2 id=\"metrics-heading\">Performans Özeti</h2>
+                    <p>Precision, Recall, mAP ve Loss metriklerinin son değerleri.</p>
+                </div>
+                <div class=\"stat-grid\">
                     $metrics_section
-                </tbody>
-            </table>
-        </section>
-        $dataset_section
-        <section>
-            <h2>🤖 AI Analizi</h2>
-            <div class=\"risk-chip\">Risk: $risk_display</div>
-            <p>$summary_text</p>
-            $analysis_lists
-            <div>
-                <h3>🎯 Aksiyon Önerileri</h3>
-                $actions_html
-            </div>
-            <div>
-                <h3>🚀 Yayın Profili</h3>
-                $deploy_html
-            </div>
-            $notes_block
-        </section>
-        <section>
-            <h2>💬 Son Sorular</h2>
-            $qa_history_html
-        </section>
+                </div>
+                <div class=\"section-block\">
+                    <h3>Risk profili</h3>
+                    $risk_section
+                </div>
+            </section>
+            $dataset_section
+            <section class=\"section-card\" aria-labelledby=\"analysis-heading\">
+                <div class=\"section-heading\">
+                    <h2 id=\"analysis-heading\">AI Analizi</h2>
+                    <p>Model değerlendirmesi, güçlü/zayıf yönler ve öneriler.</p>
+                </div>
+                <p>$summary_text</p>
+                $analysis_lists
+                <div class=\"section-block\">
+                    <h3>Aksiyon önerileri</h3>
+                    $actions_html
+                </div>
+                <div class=\"section-block\">
+                    <h3>Yayın profili</h3>
+                    $deploy_profile
+                </div>
+                $notes_block
+            </section>
+            <section class=\"section-card\" aria-labelledby=\"qa-heading\">
+                <div class=\"section-heading\">
+                    <h2 id=\"qa-heading\">Takip Soruları</h2>
+                    <p>Son otomatik Q/A oturumlarının özeti.</p>
+                </div>
+                <div class=\"qa-grid\">
+                    $qa_history
+                </div>
+            </section>
+        </div>
     </main>
-    <footer>DL_Result_Analyzer • $generated_at</footer>
+    <footer class=\"report-footer\">
+        <span>DL_Result_Analyzer • sürüm $app_version</span>
+        <span>Oluşturulma zamanı: $generated_at</span>
+    </footer>
+    <script defer>
+$ui_script
+    </script>
 </body>
 </html>
 """
     )
 
     return template.substitute(
+        page_title=escape(page_title),
         project_name=project_name_html,
         report_id=report_id_html,
         generated_at=generated_at,
         metrics_section=metrics_section,
+        risk_section=risk_section,
         dataset_section=dataset_section_html,
-        risk_display=risk_display,
-        summary_text=summary_text,
         analysis_lists=analysis_lists_html,
         actions_html=actions_html,
-        deploy_html=deploy_html,
+        deploy_profile=deploy_html,
         notes_block=notes_block,
-        qa_history_html=qa_history_html,
+        qa_history=qa_history_html,
+        summary_text=summary_text,
+        icons_svg=REPORT_ICONS_SVG,
+        theme_css=REPORT_THEME_CSS,
+        print_css=REPORT_PRINT_CSS,
+        ui_script=REPORT_UI_SCRIPT,
+        app_version=escape(str(app.version) if hasattr(app, "version") else "1.0.0"),
     )
 
 

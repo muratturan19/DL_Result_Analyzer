@@ -15,6 +15,38 @@ Derin öğrenme modeli sonuçlarını analiz etmek için tasarlanmış güçlü 
 
 ---
 
+## 🆕 UI Revamp
+
+Rapor HTML çıktıları modern bir dashboard görünümüyle güncellendi. Yeni tema sistemi, erişilebilir bileşenler ve yazdırma optimizasyonu sayesinde hem ekranda hem PDF çıktısında tutarlı bir deneyim sunulur.
+
+### Öne çıkanlar
+
+- 🌗 **Koyu/Aydınlık tema**: Varsayılan koyu tema, sistem tercihini algılar ve kullanıcı seçimi `localStorage` ile kalıcı hale gelir.
+- 📊 **Stat kartları**: Precision, Recall, mAP ve Loss metrikleri için otomatik renklendirme (hedef/tolerans eşikleri JS içinde tek noktadan yönetiliyor).
+- ⚠️ **Risk çipleri**: JSON benzeri risk listeleri okunaklı çiplere dönüştürülür, renkler risk seviyesine göre değişir.
+- 📱 **Mobil & tablet uyumu**: Stat grid, tablolar ve aksiyon listeleri küçük ekranlarda yatay kaydırma veya stack düzeni ile görünür kalır.
+- 🖨️ **A4 yazdırma modu**: `web/print.css` koyu arka planı kapatır, kenar boşluklarını ayarlar ve kartları sayfa bölünmelerine karşı korur.
+
+### Nasıl devreye alınır?
+
+1. Repo kökündeki `web/` klasöründe bulunan `report-theme.css`, `report-ui.js`, `print.css` ve `icons.svg` dosyaları otomatik olarak HTML çıktısına inline eklenir. Ek build adımı gerekmez.
+2. Backend'i güncel kodla başlatıp yeni bir rapor ürettiğinizde `_generate_html_report` fonksiyonu yeni şablonu kullanır.
+3. Önizleme için `/api/report/{report_id}/export?format=html` uç noktasını çağırarak tarayıcıda açabileceğiniz tek dosyalı raporu indirin.
+
+### Tema & Yazdırma
+
+- Header'daki **Tema** butonu renk paletini değiştirir; seçim tarayıcıda saklanır ve `prefers-color-scheme` değişimlerini dinler.
+- **Yazdır** butonu `window.print()` çağırır ve ekran modunda görünür, baskıda otomatik gizlenir.
+- Tabloların sticky başlıkları ve kart gölgeleri yazdırma modunda temizlenerek kurumsal bir PDF çıktısı alınır.
+
+### Eski raporları güncelleme (Quick Guide)
+
+1. Çalışma dizininde `git pull` ile bu sürümü alın ve backend servislerini yeniden başlatın.
+2. Her rapor için `GET /api/report/{report_id}/export?format=html` çağrısı yaparak yeni şablonu kullanan HTML dosyasını indirin.
+3. Arşivde manuel tutulmuş HTML'leriniz varsa, başlığa Tailwind CDN betiğini ekleyin ve `web/report-theme.css`, `web/print.css`, `web/report-ui.js`, `web/icons.svg` içeriklerini sırasıyla `<style>`, `<style media="print">`, `<script>` ve `<svg>` blokları olarak inline yerleştirin.
+
+---
+
 ## 🚀 Hızlı Başlangıç
 
 ### Veri Seti Özeti & Rapor Asistanı
