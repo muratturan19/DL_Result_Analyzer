@@ -6,9 +6,10 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import re
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Lock
@@ -33,6 +34,173 @@ _progress_lock = Lock()
 _ALLOWED_SPLITS = {"train", "val", "test"}
 _WINDOWS_DRIVE_PATTERN = re.compile(r"^[A-Za-z]:[/\\]")
 _WINDOWS_UNC_PATTERN = re.compile(r"^[/\\]{2}[^/\\]+[/\\]+[^/\\]+")
+
+
+class ThresholdReportStore:
+    """In-memory store for threshold optimization reports with disk persistence."""
+
+    def __init__(self, ttl_seconds: int = 24 * 3600, storage_dir: Optional[Path] = None) -> None:
+        self._ttl = timedelta(seconds=ttl_seconds)
+        self._lock = Lock()
+        storage_env = os.getenv("THRESHOLD_REPORT_STORAGE_DIR")
+        if storage_dir is not None:
+            self._storage_dir = Path(storage_dir)
+        elif storage_env:
+            self._storage_dir = Path(storage_env)
+        else:
+            self._storage_dir = Path(__file__).resolve().parent.parent.parent.parent / "threshold_reports"
+        self._storage_dir.mkdir(parents=True, exist_ok=True)
+        self._store: Dict[str, Dict[str, Any]] = {}
+        self._load_existing_reports()
+
+    def _report_path(self, report_id: str) -> Path:
+        return self._storage_dir / f"{report_id}.json"
+
+    @staticmethod
+    def _coerce_timestamp(raw_value: Optional[str]) -> datetime:
+        if not raw_value:
+            return datetime.now(timezone.utc)
+        try:
+            timestamp = datetime.fromisoformat(raw_value)
+        except ValueError:
+            logger.warning("Invalid threshold report timestamp: %s", raw_value)
+            return datetime.now(timezone.utc)
+        if timestamp.tzinfo is None:
+            return timestamp.replace(tzinfo=timezone.utc)
+        return timestamp.astimezone(timezone.utc)
+
+    def _load_existing_reports(self) -> None:
+        for json_path in self._storage_dir.glob("*.json"):
+            report_id = json_path.stem
+            try:
+                with json_path.open("r", encoding="utf-8") as handle:
+                    data = json.load(handle)
+                payload = data.get("payload")
+                if payload is None:
+                    raise ValueError("payload key not found")
+                timestamp = self._coerce_timestamp(data.get("timestamp"))
+            except Exception as exc:
+                logger.warning("Corrupted threshold report file ignored: %s (%s)", json_path, exc)
+                try:
+                    json_path.unlink()
+                except OSError:
+                    logger.debug("Could not delete threshold report file: %s", json_path)
+                continue
+            self._store[report_id] = {"payload": payload, "timestamp": timestamp}
+        self._purge_expired()
+
+    def _write_entry(self, report_id: str, entry: Dict[str, Any]) -> None:
+        payload = entry.get("payload")
+        timestamp: datetime = entry.get("timestamp", datetime.now(timezone.utc))
+        data = {
+            "payload": payload,
+            "timestamp": timestamp.astimezone(timezone.utc).isoformat(),
+        }
+        json_path = self._report_path(report_id)
+        tmp_path = json_path.with_suffix(".json.tmp")
+        try:
+            with tmp_path.open("w", encoding="utf-8") as handle:
+                json.dump(data, handle, ensure_ascii=False, indent=2)
+            tmp_path.replace(json_path)
+        except Exception:
+            logger.exception("Error writing threshold report file: %s", json_path)
+            try:
+                tmp_path.unlink()
+            except OSError:
+                logger.debug("Could not delete temp threshold report file: %s", tmp_path)
+
+    def _delete_entry(self, report_id: str) -> None:
+        json_path = self._report_path(report_id)
+        try:
+            json_path.unlink()
+        except FileNotFoundError:
+            return
+        except OSError:
+            logger.debug("Could not delete threshold report file: %s", json_path)
+
+    def _load_from_disk(self, report_id: str) -> Optional[Dict[str, Any]]:
+        json_path = self._report_path(report_id)
+        if not json_path.exists():
+            return None
+        try:
+            with json_path.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            payload = data.get("payload")
+            if payload is None:
+                raise ValueError("payload key not found")
+            timestamp = self._coerce_timestamp(data.get("timestamp"))
+        except Exception as exc:
+            logger.warning("Threshold report file could not be read, deleting: %s (%s)", json_path, exc)
+            self._delete_entry(report_id)
+            return None
+        entry = {"payload": payload, "timestamp": timestamp}
+        if datetime.now(timezone.utc) - timestamp > self._ttl:
+            self._delete_entry(report_id)
+            return None
+        return entry
+
+    def _purge_expired(self) -> None:
+        now = datetime.now(timezone.utc)
+        expired: List[str] = []
+        for report_id, entry in list(self._store.items()):
+            timestamp: datetime = entry.get("timestamp", now)
+            if now - timestamp > self._ttl:
+                expired.append(report_id)
+        for report_id in expired:
+            self._store.pop(report_id, None)
+            self._delete_entry(report_id)
+
+    def save(self, payload: Dict[str, Any]) -> str:
+        report_id = uuid4().hex
+        with self._lock:
+            self._purge_expired()
+            entry = {
+                "payload": payload,
+                "timestamp": datetime.now(timezone.utc),
+            }
+            self._store[report_id] = entry
+            self._write_entry(report_id, entry)
+        return report_id
+
+    def get(self, report_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            self._purge_expired()
+            entry = self._store.get(report_id)
+            if not entry:
+                entry = self._load_from_disk(report_id)
+                if not entry:
+                    return None
+                self._store[report_id] = entry
+            entry["timestamp"] = datetime.now(timezone.utc)
+            self._write_entry(report_id, entry)
+            return entry["payload"]
+
+    def list_all(self) -> List[Dict[str, Any]]:
+        """List all available threshold reports with metadata."""
+        with self._lock:
+            self._purge_expired()
+            reports = []
+            for report_id, entry in self._store.items():
+                payload = entry["payload"]
+                timestamp = entry["timestamp"]
+                metadata = {
+                    "report_id": report_id,
+                    "timestamp": timestamp.isoformat(),
+                    "model_filename": payload.get("model_filename"),
+                    "data_filename": payload.get("data_filename"),
+                    "split": payload.get("split"),
+                    "best_iou": payload.get("best", {}).get("iou"),
+                    "best_confidence": payload.get("best", {}).get("confidence"),
+                    "best_f1": payload.get("best", {}).get("f1"),
+                    "total_combinations": len(payload.get("heatmap", {}).get("values", [])),
+                }
+                reports.append(metadata)
+            # Sort by timestamp, newest first
+            reports.sort(key=lambda x: x["timestamp"], reverse=True)
+            return reports
+
+
+_THRESHOLD_REPORT_STORE = ThresholdReportStore()
 
 
 def _init_progress(progress_id: str, total_cycles: int) -> None:
@@ -520,6 +688,27 @@ async def optimize_thresholds(
         task=task,
     )
 
+    # Save threshold optimization report
+    report_payload = {
+        "model_filename": model_filename,
+        "data_filename": data_filename,
+        "split": split,
+        "task": task,
+        "heatmap": {
+            "rows": heatmap_rows,
+            "values": flat_results,
+            "iou_values": iou_values,
+            "confidence_values": conf_values,
+        },
+        "best": best_candidate,
+        "production_config": production_config,
+        "progress_id": progress_token,
+        "total_combinations": len(flat_results),
+        "optimization_date": datetime.now(timezone.utc).isoformat(),
+    }
+    report_id = _THRESHOLD_REPORT_STORE.save(report_payload)
+    logger.info("Threshold optimization report saved: report_id=%s", report_id)
+
     return {
         "status": "success",
         "heatmap": {
@@ -531,6 +720,7 @@ async def optimize_thresholds(
         "best": best_candidate,
         "production_config": production_config,
         "progress_id": progress_token,
+        "report_id": report_id,
     }
 
 
@@ -730,3 +920,28 @@ def _prepare_data_yaml_for_inference(
 
     if updated:
         data_yaml_path.write_text(yaml.safe_dump(content, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+
+@router.get("/thresholds/reports")
+async def list_threshold_reports() -> Dict[str, Any]:
+    """List all saved threshold optimization reports."""
+    reports = _THRESHOLD_REPORT_STORE.list_all()
+    return {
+        "status": "success",
+        "reports": reports,
+        "total": len(reports),
+    }
+
+
+@router.get("/thresholds/reports/{report_id}")
+async def get_threshold_report(report_id: str) -> Dict[str, Any]:
+    """Get a specific threshold optimization report by ID."""
+    report = _THRESHOLD_REPORT_STORE.get(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Threshold raporu bulunamadı veya süresi doldu.")
+
+    return {
+        "status": "success",
+        "report_id": report_id,
+        **report,
+    }

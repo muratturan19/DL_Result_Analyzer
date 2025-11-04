@@ -22,7 +22,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from app.api.endpoints.optimization import router as optimization_router
+from app.api.endpoints.optimization import router as optimization_router, _THRESHOLD_REPORT_STORE
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 from reportlab.lib.fonts import addMapping
@@ -1160,6 +1160,275 @@ async def get_history():
     """
     # TODO: Database integration (SQLite?)
     return {"runs": []}
+
+
+def _generate_threshold_html_report(report_id: str, context: Dict[str, Any]) -> str:
+    """Generate HTML report for threshold optimization results."""
+    model_filename = escape(str(context.get("model_filename", "N/A")))
+    data_filename = escape(str(context.get("data_filename", "N/A")))
+    split = escape(str(context.get("split", "N/A")))
+    optimization_date = context.get("optimization_date", datetime.now(timezone.utc).isoformat())
+    formatted_date = datetime.fromisoformat(optimization_date).strftime("%d %B %Y %H:%M")
+
+    best = context.get("best", {})
+    best_iou = best.get("iou", 0)
+    best_conf = best.get("confidence", 0)
+    best_precision = _format_percent(best.get("precision"))
+    best_recall = _format_percent(best.get("recall"))
+    best_f1 = _format_percent(best.get("f1"))
+    best_map50 = _format_percent(best.get("map50"))
+    best_map75 = _format_percent(best.get("map75"))
+    best_map5095 = _format_percent(best.get("map5095"))
+
+    total_combinations = context.get("total_combinations", 0)
+
+    heatmap = context.get("heatmap", {})
+    iou_values = heatmap.get("iou_values", [])
+    conf_values = heatmap.get("confidence_values", [])
+
+    production_config = context.get("production_config", {})
+    config_yaml = production_config.get("yaml", "")
+
+    template = Template("""<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="utf-8" />
+    <title>Threshold Optimization Report</title>
+    <style>
+        body { font-family: 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; background: #f3f4f6; color: #111827; }
+        header { background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; padding: 32px; }
+        header h1 { margin: 0 0 8px; font-size: 28px; }
+        header p { margin: 0; font-size: 14px; opacity: 0.85; }
+        main { padding: 32px; }
+        section { background: white; border-radius: 16px; padding: 24px; margin-bottom: 24px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08); }
+        h2 { margin-top: 0; font-size: 22px; color: #1f2937; }
+        table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+        th, td { padding: 12px 16px; text-align: left; }
+        th { background: #eef2ff; font-weight: 600; }
+        tr:nth-child(even) td { background: #f9fafb; }
+        .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-top: 16px; }
+        .metric-card { background: #f9fafb; border-radius: 12px; padding: 16px; border: 2px solid #e5e7eb; }
+        .metric-label { font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; }
+        .metric-value { font-size: 24px; font-weight: 700; color: #1f2937; margin-top: 4px; }
+        .best-badge { display: inline-block; background: #10b981; color: white; padding: 6px 12px; border-radius: 999px; font-size: 14px; font-weight: 600; }
+        pre { background: #1f2937; color: #e5e7eb; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 13px; }
+        footer { text-align: center; padding: 24px; color: #6b7280; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>🎛️ Threshold Optimization Report</h1>
+        <p>Rapor ID: $report_id • Tarih: $formatted_date</p>
+    </header>
+    <main>
+        <section>
+            <h2>📋 Optimizasyon Detayları</h2>
+            <table>
+                <tbody>
+                    <tr><th>Model</th><td>$model_filename</td></tr>
+                    <tr><th>Data Config</th><td>$data_filename</td></tr>
+                    <tr><th>Test Split</th><td>$split</td></tr>
+                    <tr><th>Toplam Kombinasyon</th><td>$total_combinations</td></tr>
+                    <tr><th>IoU Aralığı</th><td>$iou_range</td></tr>
+                    <tr><th>Confidence Aralığı</th><td>$conf_range</td></tr>
+                </tbody>
+            </table>
+        </section>
+        <section>
+            <h2>🎯 En İyi Sonuç</h2>
+            <div class="best-badge">IoU: $best_iou · Confidence: $best_conf</div>
+            <div class="metric-grid">
+                <div class="metric-card">
+                    <div class="metric-label">Precision</div>
+                    <div class="metric-value">$best_precision</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Recall</div>
+                    <div class="metric-value">$best_recall</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">F1 Score</div>
+                    <div class="metric-value">$best_f1</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">mAP@0.5</div>
+                    <div class="metric-value">$best_map50</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">mAP@0.75</div>
+                    <div class="metric-value">$best_map75</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">mAP@0.5:0.95</div>
+                    <div class="metric-value">$best_map5095</div>
+                </div>
+            </div>
+        </section>
+        <section>
+            <h2>⚙️ Production Config</h2>
+            <pre>$config_yaml</pre>
+        </section>
+    </main>
+    <footer>DL_Result_Analyzer • Threshold Optimizer • $formatted_date</footer>
+</body>
+</html>
+""")
+
+    iou_range_str = f"{min(iou_values):.2f} - {max(iou_values):.2f}" if iou_values else "N/A"
+    conf_range_str = f"{min(conf_values):.2f} - {max(conf_values):.2f}" if conf_values else "N/A"
+
+    return template.substitute(
+        report_id=escape(report_id),
+        formatted_date=formatted_date,
+        model_filename=model_filename,
+        data_filename=data_filename,
+        split=split,
+        total_combinations=total_combinations,
+        iou_range=iou_range_str,
+        conf_range=conf_range_str,
+        best_iou=f"{best_iou:.2f}",
+        best_conf=f"{best_conf:.2f}",
+        best_precision=best_precision,
+        best_recall=best_recall,
+        best_f1=best_f1,
+        best_map50=best_map50,
+        best_map75=best_map75,
+        best_map5095=best_map5095,
+        config_yaml=escape(config_yaml),
+    )
+
+
+def _generate_threshold_pdf_report(report_id: str, context: Dict[str, Any]) -> bytes:
+    """Generate PDF report for threshold optimization results."""
+    buffer = BytesIO()
+    page_width, page_height = A4
+    margin = 2 * cm
+    max_chars = 95
+
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    pdf.setTitle(f"Threshold Optimization Report - {report_id[:8]}")
+
+    model_filename = context.get("model_filename", "N/A")
+    data_filename = context.get("data_filename", "N/A")
+    split = context.get("split", "N/A")
+    optimization_date = context.get("optimization_date", datetime.now(timezone.utc).isoformat())
+    formatted_date = datetime.fromisoformat(optimization_date).strftime("%d %B %Y %H:%M")
+
+    best = context.get("best", {})
+    total_combinations = context.get("total_combinations", 0)
+
+    heatmap = context.get("heatmap", {})
+    iou_values = heatmap.get("iou_values", [])
+    conf_values = heatmap.get("confidence_values", [])
+
+    y_position = page_height - margin
+
+    def ensure_space(lines: int = 1, leading: float = 14.0) -> None:
+        nonlocal y_position
+        if y_position - lines * leading < margin:
+            pdf.showPage()
+            pdf.setFont(PDF_FONT_REGULAR, 11)
+            y_position = page_height - margin
+
+    def write_line(text: str = "", font: str = PDF_FONT_REGULAR, size: int = 11, leading: float = 14.0) -> None:
+        nonlocal y_position
+        ensure_space(1, leading)
+        pdf.setFont(font, size)
+        pdf.drawString(margin, y_position, text)
+        y_position -= leading
+
+    def write_paragraph(text: str, font: str = PDF_FONT_REGULAR, size: int = 11, leading: float = 14.0) -> None:
+        nonlocal y_position
+        if not text:
+            return
+        lines = wrap(text, max_chars)
+        ensure_space(len(lines), leading)
+        for line in lines:
+            pdf.setFont(font, size)
+            pdf.drawString(margin, y_position, line)
+            y_position -= leading
+        y_position -= leading * 0.3
+
+    def write_heading(text: str, level: int = 1) -> None:
+        size = 18 if level == 1 else 14
+        leading = 22 if level == 1 else 18
+        write_line(text, font=PDF_FONT_BOLD, size=size, leading=leading)
+
+    # Header
+    write_heading("Threshold Optimization Report", level=1)
+    write_paragraph(f"Rapor ID: {report_id}")
+    write_paragraph(f"Tarih: {formatted_date}")
+    write_line()
+
+    # Optimization details
+    write_heading("Optimizasyon Detayları", level=2)
+    write_paragraph(f"Model: {model_filename}")
+    write_paragraph(f"Data Config: {data_filename}")
+    write_paragraph(f"Test Split: {split}")
+    write_paragraph(f"Toplam Kombinasyon: {total_combinations}")
+    if iou_values:
+        write_paragraph(f"IoU Aralığı: {min(iou_values):.2f} - {max(iou_values):.2f}")
+    if conf_values:
+        write_paragraph(f"Confidence Aralığı: {min(conf_values):.2f} - {max(conf_values):.2f}")
+    write_line()
+
+    # Best results
+    write_heading("En İyi Sonuç", level=2)
+    write_paragraph(f"IoU: {best.get('iou', 0):.2f} · Confidence: {best.get('confidence', 0):.2f}", font=PDF_FONT_BOLD)
+    write_paragraph(f"Precision: {_format_percent(best.get('precision'))}")
+    write_paragraph(f"Recall: {_format_percent(best.get('recall'))}")
+    write_paragraph(f"F1 Score: {_format_percent(best.get('f1'))}")
+    write_paragraph(f"mAP@0.5: {_format_percent(best.get('map50'))}")
+    write_paragraph(f"mAP@0.75: {_format_percent(best.get('map75'))}")
+    write_paragraph(f"mAP@0.5:0.95: {_format_percent(best.get('map5095'))}")
+    write_line()
+
+    # Production config
+    production_config = context.get("production_config", {})
+    config_yaml = production_config.get("yaml", "")
+    if config_yaml:
+        write_heading("Production Config", level=2)
+        for line in config_yaml.split('\n')[:30]:  # Limit to first 30 lines
+            write_paragraph(line, size=9, leading=12)
+
+    write_paragraph(f"Oluşturma Zamanı: {formatted_date}")
+    pdf.showPage()
+    pdf.save()
+
+    return buffer.getvalue()
+
+
+@app.get("/api/optimize/thresholds/reports/{report_id}/export")
+async def export_threshold_report(report_id: str, format: str = "html"):
+    """Export threshold optimization report as HTML or PDF."""
+    context = _THRESHOLD_REPORT_STORE.get(report_id)
+    if context is None:
+        raise HTTPException(status_code=404, detail="Threshold raporu bulunamadı veya süresi doldu.")
+
+    format_normalized = (format or "html").lower()
+    model_filename = context.get("model_filename", "threshold-report")
+    slug = _slugify_filename(model_filename)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+
+    if format_normalized == "html":
+        html_content = _generate_threshold_html_report(report_id, context)
+        filename = f"{slug}-threshold-{timestamp}.html"
+        return Response(
+            content=html_content,
+            media_type="text/html; charset=utf-8",
+            headers={"Content-Disposition": f"attachment; filename=\"{filename}\""},
+        )
+
+    if format_normalized == "pdf":
+        pdf_bytes = _generate_threshold_pdf_report(report_id, context)
+        filename = f"{slug}-threshold-{timestamp}.pdf"
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename=\"{filename}\""},
+        )
+
+    raise HTTPException(status_code=400, detail="Desteklenmeyen format. Lütfen 'html' veya 'pdf' kullanın.")
 
 # =============================================================================
 # LLM ANALYZER (Ayrı dosyada olacak: analyzers/llm_analyzer.py)
