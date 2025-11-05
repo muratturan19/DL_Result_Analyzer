@@ -1321,8 +1321,26 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
     classCount: '',
     trainingMethod: '',
     projectFocus: '',
-    trainingCode: null
+    trainingCode: null,
+    projectType: '',
+    datasetTotals: {
+      train: '',
+      val: '',
+      test: '',
+      total: ''
+    },
+    splitRatios: {
+      train: '',
+      val: '',
+      test: ''
+    },
+    folderDistributions: {
+      train: '',
+      val: '',
+      test: ''
+    }
   });
+  const [formErrors, setFormErrors] = useState([]);
 
   const methodOptions = [
     { value: 'yolov8-s', label: 'YOLOv8-S' },
@@ -1344,6 +1362,15 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
     { value: 'latency', label: 'Çıkarım Hızı / Gecikme' }
   ];
 
+  const projectTypeOptions = [
+    { value: 'classification', label: 'Sınıflandırma' },
+    { value: 'object_detection', label: 'Nesne Tespiti' },
+    { value: 'instance_segmentation', label: 'Instance Segmentasyon' },
+    { value: 'semantic_segmentation', label: 'Semantik Segmentasyon' },
+    { value: 'pose_estimation', label: 'Pose Tahmini' },
+    { value: 'other', label: 'Diğer' }
+  ];
+
   const updateFiles = (patch) => {
     const updated = { ...files, ...patch };
     setFiles(updated);
@@ -1357,11 +1384,104 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
     }));
   };
 
+  const updateNestedProjectInfo = (section, key, value) => {
+    setProjectInfo((prev) => ({
+      ...prev,
+      [section]: {
+        ...prev[section],
+        [key]: value
+      }
+    }));
+  };
+
+  const parseIntegerField = (value, fieldLabel, errors) => {
+    const trimmed = (value ?? '').toString().trim();
+    if (!trimmed) return null;
+    const numeric = Number(trimmed);
+    if (!Number.isFinite(numeric) || numeric < 0) {
+      errors.push(`${fieldLabel} için 0 veya daha büyük bir değer giriniz.`);
+      return null;
+    }
+    if (!Number.isInteger(numeric)) {
+      errors.push(`${fieldLabel} tam sayı olmalıdır.`);
+      return null;
+    }
+    return numeric;
+  };
+
+  const parsePercentageField = (value, fieldLabel, errors) => {
+    const trimmed = (value ?? '').toString().trim();
+    if (!trimmed) return null;
+    const numeric = Number(trimmed);
+    if (!Number.isFinite(numeric)) {
+      errors.push(`${fieldLabel} için geçerli bir yüzde değeri giriniz.`);
+      return null;
+    }
+    if (numeric < 0 || numeric > 100) {
+      errors.push(`${fieldLabel} 0 ile 100 arasında olmalıdır.`);
+      return null;
+    }
+    return Number(numeric.toFixed(2));
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
 
     console.log('=== DOSYA YÜKLEME BAŞLADI ===');
     console.log('Timestamp:', new Date().toISOString());
+
+    const errors = [];
+
+    const parsedTotals = {};
+    Object.entries(projectInfo.datasetTotals || {}).forEach(([key, value]) => {
+      const labelMap = {
+        train: 'Train görsel sayısı',
+        val: 'Val görsel sayısı',
+        test: 'Test görsel sayısı',
+        total: 'Toplam görsel sayısı'
+      };
+      const parsed = parseIntegerField(value, labelMap[key] || key, errors);
+      if (parsed !== null) {
+        parsedTotals[key] = parsed;
+      }
+    });
+
+    const parsedSplitRatios = {};
+    let splitSum = 0;
+    let splitCount = 0;
+    Object.entries(projectInfo.splitRatios || {}).forEach(([key, value]) => {
+      const labelMap = {
+        train: 'Train yüzdesi',
+        val: 'Val yüzdesi',
+        test: 'Test yüzdesi'
+      };
+      const parsed = parsePercentageField(value, labelMap[key] || key, errors);
+      if (parsed !== null) {
+        parsedSplitRatios[key] = parsed;
+        splitSum += parsed;
+        splitCount += 1;
+      }
+    });
+
+    if (splitCount > 0 && Math.abs(splitSum - 100) > 0.5) {
+      errors.push('Train/Val/Test yüzdelerinin toplamı %100 olmalıdır.');
+    }
+
+    const folderDistributionPayload = {};
+    Object.entries(projectInfo.folderDistributions || {}).forEach(([key, value]) => {
+      const trimmed = (value ?? '').toString().trim();
+      if (trimmed) {
+        folderDistributionPayload[key] = trimmed;
+      }
+    });
+
+    if (errors.length > 0) {
+      console.warn('Form doğrulaması başarısız:', errors);
+      setFormErrors(errors);
+      return;
+    }
+
+    setFormErrors([]);
 
     // Log file details
     const fileDetails = {
@@ -1382,6 +1502,9 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
       projectInfo.trainingCode?.size || 0
     ].reduce((sum, size) => sum + size, 0);
     console.log('Toplam dosya boyutu:', (totalSize / 1024 / 1024).toFixed(2), 'MB');
+    console.log('Doğrulanmış veri seti toplamları:', parsedTotals);
+    console.log('Doğrulanmış split yüzdeleri:', parsedSplitRatios);
+    console.log('Klasör dağılımı notları:', folderDistributionPayload);
 
     onUpload({ _loading: true });
 
@@ -1409,6 +1532,18 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
     }
     if (projectInfo.trainingCode) {
       formData.append('training_code', projectInfo.trainingCode);
+    }
+    if (projectInfo.projectType) {
+      formData.append('project_type', projectInfo.projectType);
+    }
+    if (Object.keys(parsedTotals).length > 0) {
+      formData.append('dataset_totals', JSON.stringify(parsedTotals));
+    }
+    if (Object.keys(parsedSplitRatios).length > 0) {
+      formData.append('split_ratios', JSON.stringify(parsedSplitRatios));
+    }
+    if (Object.keys(folderDistributionPayload).length > 0) {
+      formData.append('folder_distributions', JSON.stringify(folderDistributionPayload));
     }
 
     const uploadStartTime = Date.now();
@@ -1542,6 +1677,24 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
               />
             </div>
 
+            <div className="input-group">
+              <label htmlFor="projectType">Proje Türü</label>
+              <select
+                id="projectType"
+                value={projectInfo.projectType}
+                onChange={(e) => updateProjectInfo('projectType', e.target.value)}
+                disabled={isLoading}
+              >
+                <option value="">Seçiniz</option>
+                {projectTypeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <span className="form-hint">Modelin çözdüğü bilgisayar görüşü görevini seçin.</span>
+            </div>
+
             <div className="input-row">
               <div className="input-group">
                 <label htmlFor="classCount">Class Sayısı</label>
@@ -1606,6 +1759,101 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
                 )}
               </div>
             </div>
+
+            <div className="metadata-section">
+              <div className="metadata-header">
+                <h4>Veri Seti Toplamları</h4>
+                <span className="form-hint">Her bölüme ait görsel sayısını giriniz.</span>
+              </div>
+              <div className="nested-input-grid">
+                {['train', 'val', 'test', 'total'].map((key) => {
+                  const labelMap = {
+                    train: 'Train',
+                    val: 'Val',
+                    test: 'Test',
+                    total: 'Toplam'
+                  };
+                  return (
+                    <div key={key} className="nested-input-group">
+                      <label htmlFor={`dataset-total-${key}`}>{labelMap[key]}</label>
+                      <input
+                        id={`dataset-total-${key}`}
+                        type="number"
+                        min="0"
+                        step="1"
+                        inputMode="numeric"
+                        placeholder="Örn. 1200"
+                        value={projectInfo.datasetTotals?.[key] ?? ''}
+                        onChange={(e) => updateNestedProjectInfo('datasetTotals', key, e.target.value)}
+                        disabled={isLoading}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="metadata-section">
+              <div className="metadata-header">
+                <h4>Veri Seti Bölünmeleri (%)</h4>
+                <span className="form-hint">Train/Val/Test yüzdeleri toplamı 100 olmalıdır.</span>
+              </div>
+              <div className="nested-input-grid">
+                {['train', 'val', 'test'].map((key) => {
+                  const labelMap = {
+                    train: 'Train %',
+                    val: 'Val %',
+                    test: 'Test %'
+                  };
+                  return (
+                    <div key={key} className="nested-input-group">
+                      <label htmlFor={`split-ratio-${key}`}>{labelMap[key]}</label>
+                      <input
+                        id={`split-ratio-${key}`}
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.1"
+                        inputMode="decimal"
+                        placeholder="Örn. 70"
+                        value={projectInfo.splitRatios?.[key] ?? ''}
+                        onChange={(e) => updateNestedProjectInfo('splitRatios', key, e.target.value)}
+                        disabled={isLoading}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="metadata-section">
+              <div className="metadata-header">
+                <h4>Klasör İçi Oranlar</h4>
+                <span className="form-hint">Her klasördeki sınıf dağılımını yüzde veya oran olarak belirtin (örn. Potluk %60 / Temiz %40).</span>
+              </div>
+              <div className="nested-input-grid">
+                {['train', 'val', 'test'].map((key) => {
+                  const labelMap = {
+                    train: 'Train klasörü',
+                    val: 'Val klasörü',
+                    test: 'Test klasörü'
+                  };
+                  return (
+                    <div key={key} className="nested-input-group">
+                      <label htmlFor={`folder-dist-${key}`}>{labelMap[key]}</label>
+                      <input
+                        id={`folder-dist-${key}`}
+                        type="text"
+                        placeholder="Örn. Potluk %60 / Temiz %40"
+                        value={projectInfo.folderDistributions?.[key] ?? ''}
+                        onChange={(e) => updateNestedProjectInfo('folderDistributions', key, e.target.value)}
+                        disabled={isLoading}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1642,6 +1890,17 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
             </label>
           </div>
         </div>
+
+        {formErrors.length > 0 && (
+          <div className="form-error-list">
+            <h4>Form Hataları</h4>
+            <ul>
+              {formErrors.map((error, idx) => (
+                <li key={idx}>{error}</li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <button type="submit" className="btn-primary" disabled={isLoading || !files.csv}>
           {isLoading ? '⏳ Analiz Ediliyor...' : 'Analiz Et 🚀'}
