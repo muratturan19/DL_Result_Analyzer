@@ -37,6 +37,17 @@ Konfigürasyon:
 Veri Seti Özeti:
 {dataset}
 
+═══════════════════════════════════════════════════════════════════════════════
+📦 VERİ SETİ KALİTE KONTROLÜ (ZORUNLU)
+═══════════════════════════════════════════════════════════════════════════════
+
+Mutlaka şunları değerlendir:
+
+- Veri seti boyutunu toplam görsel ve sınıf başına dağılım olarak belirt; küçük veri (<750 görsel) durumunda riskleri açıkla.
+- Train/val/test split oranlarını % olarak hesapla, ideal 70/20/10 (±5 puan tolerans) ile karşılaştırıp sapmaları açıkla.
+- Klasör/sınıf dağılımında dengesizlik varsa yüzdesel sapmayı yaz ve veri artırımı için öneri sun.
+- Her bulguya yönelik somut aksiyon öner (ör. "val oranı %12 → %20'ye çıkar", "Class_B için +120 görsel topla").
+
 Proje Bağlamı:
 {project_context}
 
@@ -45,6 +56,27 @@ Eğitim Kodu:
 
 Artefaktlar:
 {artefacts}
+
+═══════════════════════════════════════════════════════════════════════════════
+🏗️ MODEL MİMARİSİ ⟷ VERİ SETİ UYUMU
+═══════════════════════════════════════════════════════════════════════════════
+
+Model mimarisi ile veri seti büyüklüğünü mutlaka karşılaştır:
+
+- YOLO nano/pico (n, nano, tiny): minimum 500 etiketli görsel.
+- YOLO small (s): minimum 1 000 görsel.
+- YOLO medium (m): minimum 2 000 görsel.
+- YOLO large (l): minimum 4 000 görsel.
+- YOLO x/xl (x, x-large, xxl): minimum 8 000 görsel.
+- Gerekirse resmi dokümantasyondan bildiğin diğer mimariler için benzer tablolar ekle.
+
+Eğer veri seti bu eşikleri karşılamıyorsa:
+- Daha küçük mimariye geçiş, veri toplama veya sınıf birleşimi gibi net aksiyonlar öner.
+- Eğitim süresi/bellek maliyetini veri boyutuna göre yorumla.
+
+Veri seti büyükse (örn. mimari gereksinimin %125'inden fazla), eğitim süresi ve augmentasyon stratejilerini optimize et.
+
+Bu analizi hem özet bölümüne hem de aksiyonlara bağla.
 
 ═══════════════════════════════════════════════════════════════════════════════
 📈 GRAFİK ANALİZİ TALİMATLARI (ÇOK ÖNEMLİ!)
@@ -189,6 +221,28 @@ MUTLAKA bu formatı kullan:
       "validation_plan": "..."
     }}
   ],
+  "dataset_review": {{
+    "size_evaluation": "Toplam X görsel, sınıf başına dağılım", 
+    "split_assessment": "Train/Val/Test = %...", 
+    "folder_distribution": [
+      "Class_A: 320 (35%)",
+      "Class_B: 180 (20%)"
+    ],
+    "recommendations": [
+      "Val oranını %18 → %22 aralığına çıkar",
+      "Class_B için +120 etiketli görsel topla"
+    ]
+  }},
+  "architecture_alignment": {{
+    "model_name": "YOLOv8l", 
+    "minimum_required_images": "4 000", 
+    "current_dataset_images": "2 150", 
+    "fit_assessment": "Veri seti gereksinimin %54'ünde → overfit riski", 
+    "actions": [
+      "Modeli YOLOv8m'e düşür veya veri setini +1 850 örnekle genişlet", 
+      "Geniş veri için augmentasyon yoğunluğunu azalt"
+    ]
+  }},
   "risk": "low/medium/high",
   "deploy_profile": {{
     "release_decision": "...",
@@ -207,6 +261,8 @@ MUTLAKA bu formatı kullan:
 ✓ Grafikleri DİKKATLİCE incele ve görsel verileri YORUMLA
 ✓ Sayısal değerleri KULLAN (yüzdeler, threshold değerleri, vb.)
 ✓ Metrikler arası ilişkileri AÇIKLA (F1, Precision, Recall ilişkisi)
+✓ Veri seti boyutu ve split oranlarını SAYISAL olarak değerlendir
+✓ Model mimarisi ↔ veri boyutu uyumunu TABLO veya kural setiyle kontrol et
 ✓ Trade-off'ları NET olarak BELIRT
 ✓ Kullanıcıya PRATİK öneriler sun
 ✓ Dil SADE ve ANLAŞILIR olsun (teknik terimler parantezde açıklansın)
