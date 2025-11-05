@@ -1,4 +1,6 @@
 """Tests for FastAPI endpoints."""
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
@@ -96,12 +98,34 @@ class TestAPI:
     ):
         """Uploading results should allow follow-up Q/A queries."""
 
+        dataset_payload = {
+            "train": 280,
+            "val": 80,
+            "test": 40,
+            "total": 400,
+        }
+        split_payload = {
+            "train": 0.7,
+            "val": 0.2,
+            "test": 0.1,
+        }
+        folder_payload = {
+            "train": {"images": 280, "labels": 280},
+            "val": {"images": 80, "labels": 80},
+        }
+
         with sample_csv_path.open("rb") as csv_file, sample_yaml_path.open("rb") as yaml_file:
             files = [
                 ("results_csv", ("sample_results.csv", csv_file, "text/csv")),
                 ("config_yaml", ("sample_args.yaml", yaml_file, "application/x-yaml")),
             ]
-            upload_response = client.post("/api/upload/results", files=files)
+            form_data = {
+                "project_type": "object-detection",
+                "dataset_totals": json.dumps(dataset_payload),
+                "split_ratios": json.dumps(split_payload),
+                "folder_distributions": json.dumps(folder_payload),
+            }
+            upload_response = client.post("/api/upload/results", files=files, data=form_data)
 
         assert upload_response.status_code == 200
         upload_data = upload_response.json()
@@ -110,6 +134,12 @@ class TestAPI:
 
         dataset_info = upload_data.get("config", {}).get("dataset", {})
         assert dataset_info.get("train_images") == 280
+        assert dataset_info.get("dataset_totals", {}).get("train") == 280
+        assert dataset_info.get("dataset_totals", {}).get("total") == 400
+        assert dataset_info.get("split_ratios", {}).get("val") == pytest.approx(0.2)
+        folder_info = dataset_info.get("folder_distributions", {})
+        assert folder_info.get("train", {}).get("images") == 280
+        assert upload_data.get("project", {}).get("project_type") == "object-detection"
 
         qa_response = client.post(
             f"/api/report/{report_id}/qa",

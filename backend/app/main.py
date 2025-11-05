@@ -1102,6 +1102,10 @@ async def upload_results(
     class_count: Optional[str] = Form(None),
     training_method: Optional[str] = Form(None),
     project_focus: Optional[str] = Form(None),
+    project_type: Optional[str] = Form(None),
+    dataset_totals: Optional[str] = Form(None),
+    split_ratios: Optional[str] = Form(None),
+    folder_distributions: Optional[str] = Form(None),
     llm_provider: str = Form("claude"),
 ):
     """
@@ -1138,6 +1142,7 @@ async def upload_results(
     cleaned_description = _clean_str(short_description)
     cleaned_method = _clean_str(training_method)
     cleaned_focus = _clean_str(project_focus)
+    cleaned_project_type = _clean_str(project_type)
 
     cleaned_class_count: Optional[int] = None
     if class_count is not None:
@@ -1145,6 +1150,120 @@ async def upload_results(
             cleaned_class_count = int(class_count)
         except (TypeError, ValueError):
             logger.warning("Geçersiz class_count değeri alındı: %s", class_count)
+
+    def _parse_json_field(raw_value: Optional[str], *, field_name: str) -> Optional[Any]:
+        if raw_value is None:
+            return None
+        candidate = raw_value.strip()
+        if not candidate:
+            return None
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            logger.warning("%s alanı için geçersiz JSON alındı", field_name)
+            return None
+
+    def _cast_to_int(value: Any) -> Optional[int]:
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(round(value))
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return None
+            try:
+                return int(round(float(stripped.replace(",", "."))))
+            except ValueError:
+                return None
+        return None
+
+    def _cast_to_float(value: Any) -> Optional[float]:
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return None
+            normalized = stripped.replace(",", ".")
+            try:
+                return float(normalized)
+            except ValueError:
+                return None
+        return None
+
+    def _sanitize_numeric_mapping(
+        data: Any, *, field_name: str, caster
+    ) -> Optional[Dict[str, Any]]:
+        if data is None:
+            return None
+        if not isinstance(data, dict):
+            logger.warning("%s alanı için dict bekleniyordu", field_name)
+            return None
+        sanitized: Dict[str, Any] = {}
+        for key, value in data.items():
+            key_str = str(key).strip()
+            if not key_str:
+                continue
+            numeric_value = caster(value)
+            if numeric_value is None:
+                logger.warning(
+                    "%s alanındaki '%s' değeri sayıya dönüştürülemedi",
+                    field_name,
+                    key_str,
+                )
+                continue
+            sanitized[key_str] = numeric_value
+        return sanitized or None
+
+    def _sanitize_nested_numeric(data: Any, *, field_name: str, caster):
+        if data is None:
+            return None
+
+        def _inner(value: Any):
+            if isinstance(value, dict):
+                nested: Dict[str, Any] = {}
+                for nested_key, nested_value in value.items():
+                    key_str = str(nested_key).strip()
+                    if not key_str:
+                        continue
+                    cleaned = _inner(nested_value)
+                    if cleaned is not None:
+                        nested[key_str] = cleaned
+                return nested or None
+            if isinstance(value, list):
+                cleaned_list = []
+                for item in value:
+                    cleaned = _inner(item)
+                    if cleaned is not None:
+                        cleaned_list.append(cleaned)
+                return cleaned_list or None
+            return caster(value)
+
+        sanitized = _inner(data)
+        if sanitized is None and data not in (None, ""):
+            logger.warning("%s alanı için geçerli bir dağılım elde edilemedi", field_name)
+        return sanitized
+
+    parsed_dataset_totals = _sanitize_numeric_mapping(
+        _parse_json_field(dataset_totals, field_name="dataset_totals"),
+        field_name="dataset_totals",
+        caster=_cast_to_int,
+    )
+    parsed_split_ratios = _sanitize_numeric_mapping(
+        _parse_json_field(split_ratios, field_name="split_ratios"),
+        field_name="split_ratios",
+        caster=_cast_to_float,
+    )
+    parsed_folder_distributions = _sanitize_nested_numeric(
+        _parse_json_field(folder_distributions, field_name="folder_distributions"),
+        field_name="folder_distributions",
+        caster=_cast_to_int,
+    )
 
     try:
         logger.info("CSV dosyası okunuyor...")
@@ -1247,6 +1366,7 @@ async def upload_results(
             "class_count": cleaned_class_count,
             "training_method": cleaned_method,
             "project_focus": cleaned_focus,
+            "project_type": cleaned_project_type,
         }
         project_context = {k: v for k, v in project_context.items() if v not in (None, "")}
 
@@ -1258,6 +1378,38 @@ async def upload_results(
             }
 
         enriched_config: Dict[str, object] = dict(config)
+        dataset_section: Dict[str, Any] = {}
+        if isinstance(enriched_config.get("dataset"), dict):
+            dataset_section = dict(enriched_config["dataset"])
+
+        if parsed_dataset_totals:
+            dataset_section["dataset_totals"] = parsed_dataset_totals
+            alias_map = {
+                "train": "train_images",
+                "training": "train_images",
+                "val": "val_images",
+                "validation": "val_images",
+                "test": "test_images",
+                "total": "total_images",
+            }
+            for original_key, numeric_value in parsed_dataset_totals.items():
+                lookup = (
+                    alias_map.get(original_key.lower())
+                    if isinstance(original_key, str)
+                    else None
+                )
+                if lookup:
+                    dataset_section[lookup] = numeric_value
+
+        if parsed_split_ratios:
+            dataset_section["split_ratios"] = parsed_split_ratios
+
+        if parsed_folder_distributions:
+            dataset_section["folder_distributions"] = parsed_folder_distributions
+
+        if dataset_section:
+            enriched_config["dataset"] = dataset_section
+
         if project_context:
             enriched_config["project_context"] = project_context
         if training_code_context:
