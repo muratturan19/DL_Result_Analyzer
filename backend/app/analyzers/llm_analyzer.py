@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import base64
 import inspect
 import json
 import logging
 import os
 import re
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 from anthropic import Anthropic
@@ -587,6 +589,7 @@ class LLMAnalyzer:
         training_code: Optional[Dict[str, str]] = None,
         history: Optional[Dict] = None,
         artefacts: Optional[Dict] = None,
+        graph_images: Optional[List[Path]] = None,
     ) -> Dict:
         """Create the analysis prompt and dispatch it to the chosen provider."""
 
@@ -605,8 +608,8 @@ class LLMAnalyzer:
         )
 
         if self.provider == "claude":
-            return self._analyze_with_claude(prompt)
-        return self._analyze_with_gpt(prompt)
+            return self._analyze_with_claude(prompt, graph_images=graph_images or [])
+        return self._analyze_with_gpt(prompt, graph_images=graph_images or [])
 
     @staticmethod
     def _format_percentage(value: Any) -> str:
@@ -765,7 +768,31 @@ class LLMAnalyzer:
             logger.warning("LLM QA isteği başarısız oldu: %s", exc)
             return self._fallback_answer(question, context, error=str(exc))
 
-    def _analyze_with_claude(self, prompt: str) -> Dict:
+    @staticmethod
+    def _encode_image_to_base64(image_path: Path) -> tuple[str, str]:
+        """Encode an image file to base64 and detect its media type."""
+        if not image_path.exists():
+            raise FileNotFoundError(f"Image file not found: {image_path}")
+
+        # Detect media type based on file extension
+        extension = image_path.suffix.lower()
+        media_type_map = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".gif": "image/gif",
+            ".webp": "image/webp",
+        }
+        media_type = media_type_map.get(extension, "image/png")
+
+        # Read and encode the image
+        with open(image_path, "rb") as image_file:
+            image_data = image_file.read()
+
+        encoded = base64.standard_b64encode(image_data).decode("utf-8")
+        return encoded, media_type
+
+    def _analyze_with_claude(self, prompt: str, graph_images: Optional[List[Path]] = None) -> Dict:
         system_instruction = (
             "You are an assistant that strictly replies with ONLY a valid JSON object. "
             "CRITICAL: Return PURE JSON ONLY - NO markdown, NO code blocks, NO ```json, NO explanatory text. "
@@ -780,16 +807,36 @@ class LLMAnalyzer:
             "except for metric names or hyperparameters."
         )
 
+        # Build the content with text and images
+        content_blocks: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
+
+        # Add images if provided
+        if graph_images:
+            for image_path in graph_images:
+                try:
+                    encoded_data, media_type = self._encode_image_to_base64(image_path)
+                    content_blocks.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": encoded_data,
+                        },
+                    })
+                    logger.debug("Grafik eklendi: %s", image_path.name)
+                except Exception as exc:
+                    logger.warning("Grafik eklenemedi (%s): %s", image_path.name, exc)
+
         try:
             response = self.client.messages.create(
                 model="claude-sonnet-4-5-20250929",
-                max_tokens=4096,  # Increased for longer Turkish responses
+                max_tokens=8192,  # Increased for detailed graph analysis
                 temperature=0,
                 system=system_instruction,
                 messages=[
                     {
                         "role": "user",
-                        "content": prompt,
+                        "content": content_blocks,
                     }
                 ],
             )
@@ -812,7 +859,7 @@ class LLMAnalyzer:
         )
         return self._parse_structured_output(raw_text)
 
-    def _analyze_with_gpt(self, prompt: str) -> Dict:
+    def _analyze_with_gpt(self, prompt: str, graph_images: Optional[List[Path]] = None) -> Dict:
         system_instruction = (
             "You are an assistant that returns thorough analyses as JSON. "
             'Respond with an object containing "summary", "strengths", "weaknesses", '
@@ -825,6 +872,23 @@ class LLMAnalyzer:
 
         model_name = "gpt-5-thinking" if self._openai_high_reasoning else "gpt-5"
         reasoning_effort = "high" if self._openai_high_reasoning else "medium"
+
+        # Build user content with text and images
+        user_content: List[Dict[str, Any]] = [{"type": "input_text", "text": prompt}]
+
+        # Add images if provided (OpenAI uses data URLs)
+        if graph_images:
+            for image_path in graph_images:
+                try:
+                    encoded_data, media_type = self._encode_image_to_base64(image_path)
+                    data_url = f"data:{media_type};base64,{encoded_data}"
+                    user_content.append({
+                        "type": "input_image",
+                        "image_url": data_url,
+                    })
+                    logger.debug("Grafik eklendi (GPT): %s", image_path.name)
+                except Exception as exc:
+                    logger.warning("Grafik eklenemedi (%s): %s", image_path.name, exc)
 
         try:
             request_kwargs: Dict[str, Any] = {
@@ -839,9 +903,7 @@ class LLMAnalyzer:
                     },
                     {
                         "role": "user",
-                        "content": [
-                            {"type": "input_text", "text": prompt},
-                        ],
+                        "content": user_content,
                     },
                 ],
             }

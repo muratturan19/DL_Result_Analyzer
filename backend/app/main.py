@@ -1288,11 +1288,21 @@ async def upload_results(
             logger.warning("Geçersiz LLM provider: %s, claude kullanılacak", provider)
             provider = "claude"
 
+        # Prepare graph image paths for LLM vision analysis
+        graph_image_paths: List[Path] = []
+        if graphs:
+            graphs_dir = uploads_dir / "graphs"
+            for graph_filename in saved_graphs:
+                graph_path = graphs_dir / graph_filename
+                if graph_path.exists():
+                    graph_image_paths.append(graph_path)
+                    logger.debug("Grafik LLM'e gönderilecek: %s", graph_filename)
+
         analysis: Dict[str, Any] = {}
         llm_start_time = time.time()
         try:
             analyzer = LLMAnalyzer(provider=provider)  # type: ignore[arg-type]
-            logger.info("LLM analizi başlatılıyor: provider=%s", provider)
+            logger.info("LLM analizi başlatılıyor: provider=%s, graphs=%d", provider, len(graph_image_paths))
 
             analysis = analyzer.analyze(
                 metrics,
@@ -1301,6 +1311,7 @@ async def upload_results(
                 training_code=training_code_context,
                 history=history,
                 artefacts=artefacts_info,
+                graph_images=graph_image_paths,
             )
 
             llm_duration = time.time() - llm_start_time
