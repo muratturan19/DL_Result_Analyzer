@@ -50,6 +50,11 @@ class TestLLMAnalyzer:
         assert "Precision 79" in prompt or "0.79" in prompt or "79" in prompt
         assert "Recall" in prompt and ("0.82" in prompt or "82" in prompt)
         assert "epochs" in prompt.lower() or "100" in prompt  # Config is surfaced
+        assert 'veri seti boyutu' in prompt.lower()
+        assert 'train/val/test' in prompt.lower()
+        assert '"dataset_review"' in prompt
+        assert '"architecture_alignment"' in prompt
+        assert 'yolo large (l)' in prompt.lower()
         assert len(prompt) > 1000  # Prompt should be substantial
 
     def test_build_prompt_with_missing_metrics(self):

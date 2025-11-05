@@ -34,6 +34,52 @@ const formatDuration = (seconds) => {
   return parts.join(':');
 };
 
+const startCase = (value = '') => {
+  const cleaned = String(value)
+    .replace(/[_\-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return '';
+  return cleaned
+    .split(' ')
+    .map((word) =>
+      word ? word.charAt(0).toLocaleUpperCase('tr-TR') + word.slice(1) : word
+    )
+    .join(' ');
+};
+
+const insightToList = (data) => {
+  const toLines = (value) => {
+    if (value === null || value === undefined) return [];
+    if (typeof value === 'string') {
+      return value
+        .split(/\n+/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return [String(value)];
+    }
+    if (Array.isArray(value)) {
+      return value.flatMap((item) => toLines(item));
+    }
+    if (typeof value === 'object') {
+      return Object.entries(value).flatMap(([key, nestedValue]) => {
+        const nestedLines = toLines(nestedValue);
+        if (nestedLines.length === 0) return [];
+        const label = startCase(key);
+        if (nestedLines.length === 1 && !/^[^:]+:\s*/u.test(nestedLines[0])) {
+          return [`${label}: ${nestedLines[0]}`];
+        }
+        return nestedLines.map((line, idx) => `${label} #${idx + 1}: ${line}`);
+      });
+    }
+    return [String(value)];
+  };
+
+  return toLines(data);
+};
+
 const buildRangeValues = (range) => {
   if (!range) return [];
   const start = Number(range.start);
@@ -2015,6 +2061,25 @@ const AIAnalysis = ({ analysis, isLoading }) => {
       .filter(Boolean);
   }, [analysis?.notes]);
 
+  const datasetReviewItems = useMemo(
+    () => insightToList(analysis?.dataset_review),
+    [analysis?.dataset_review]
+  );
+
+  const architectureAlignmentItems = useMemo(() => {
+    const source =
+      analysis?.architecture_alignment ||
+      analysis?.architecture_review ||
+      analysis?.architecture_fit ||
+      analysis?.model_dataset_alignment;
+    return insightToList(source);
+  }, [
+    analysis?.architecture_alignment,
+    analysis?.architecture_review,
+    analysis?.architecture_fit,
+    analysis?.model_dataset_alignment
+  ]);
+
   const renderAction = (action, idx) => {
     if (!action || typeof action !== 'object') {
       return (
@@ -2127,6 +2192,34 @@ const AIAnalysis = ({ analysis, isLoading }) => {
           <p>{analysis.summary}</p>
         )}
       </div>
+
+      {datasetReviewItems.length > 0 && (
+        <div className="analysis-section dataset-review">
+          <h3>📦 Veri Seti İncelemesi</h3>
+          <p className="analysis-section-description">
+            Veri seti boyutu, split oranları ve klasör dağılımı bulguları.
+          </p>
+          <ul>
+            {datasetReviewItems.map((item, idx) => (
+              <li key={`dataset-review-${idx}`}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {architectureAlignmentItems.length > 0 && (
+        <div className="analysis-section architecture-alignment">
+          <h3>🏗️ Mimari & Veri Uyum Kontrolü</h3>
+          <p className="analysis-section-description">
+            Model mimarisi gereksinimleri ile veri seti büyüklüğü karşılaştırması.
+          </p>
+          <ul>
+            {architectureAlignmentItems.map((item, idx) => (
+              <li key={`architecture-alignment-${idx}`}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="analysis-columns">
         <div className="analysis-section strengths">
