@@ -1370,9 +1370,6 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
     trainingCode: null,
     projectType: '',
     datasetTotals: {
-      train: '',
-      val: '',
-      test: '',
       total: ''
     },
     splitRatios: {
@@ -1381,9 +1378,9 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
       test: ''
     },
     folderDistributions: {
-      train: '',
-      val: '',
-      test: ''
+      train: { clean: '', problematic: '', hn: '' },
+      val: { clean: '', problematic: '', hn: '' },
+      test: { clean: '', problematic: '', hn: '' }
     }
   });
   const [formErrors, setFormErrors] = useState([]);
@@ -1417,6 +1414,18 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
     { value: 'other', label: 'Diğer' }
   ];
 
+  const folderClassOptions = [
+    { key: 'clean', label: 'Temiz %' },
+    { key: 'problematic', label: 'Problemli %' },
+    { key: 'hn', label: 'HN %' }
+  ];
+
+  const folderSplitLabels = {
+    train: 'Train',
+    val: 'Val',
+    test: 'Test'
+  };
+
   const updateFiles = (patch) => {
     const updated = { ...files, ...patch };
     setFiles(updated);
@@ -1436,6 +1445,19 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
       [section]: {
         ...prev[section],
         [key]: value
+      }
+    }));
+  };
+
+  const updateFolderDistribution = (splitKey, classKey, value) => {
+    setProjectInfo((prev) => ({
+      ...prev,
+      folderDistributions: {
+        ...prev.folderDistributions,
+        [splitKey]: {
+          ...(prev.folderDistributions?.[splitKey] || {}),
+          [classKey]: value
+        }
       }
     }));
   };
@@ -1481,9 +1503,6 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
     const parsedTotals = {};
     Object.entries(projectInfo.datasetTotals || {}).forEach(([key, value]) => {
       const labelMap = {
-        train: 'Train görsel sayısı',
-        val: 'Val görsel sayısı',
-        test: 'Test görsel sayısı',
         total: 'Toplam görsel sayısı'
       };
       const parsed = parseIntegerField(value, labelMap[key] || key, errors);
@@ -1514,10 +1533,43 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
     }
 
     const folderDistributionPayload = {};
-    Object.entries(projectInfo.folderDistributions || {}).forEach(([key, value]) => {
-      const trimmed = (value ?? '').toString().trim();
-      if (trimmed) {
-        folderDistributionPayload[key] = trimmed;
+    const folderLabelMap = folderSplitLabels;
+    const classLabelMap = {
+      clean: 'Temiz',
+      problematic: 'Problemli',
+      hn: 'HN'
+    };
+
+    Object.entries(projectInfo.folderDistributions || {}).forEach(([splitKey, distribution]) => {
+      const parsedDistribution = {};
+      let providedCount = 0;
+      let sum = 0;
+
+      folderClassOptions.forEach(({ key: classKey }) => {
+        const value = distribution?.[classKey];
+        const label = `${folderLabelMap[splitKey] || splitKey} - ${classLabelMap[classKey] || classKey} yüzdesi`;
+        const parsed = parsePercentageField(value, label, errors);
+        if (parsed !== null) {
+          parsedDistribution[classKey] = parsed;
+          providedCount += 1;
+          sum += parsed;
+        }
+      });
+
+      if (providedCount > 0 && providedCount < folderClassOptions.length) {
+        errors.push(
+          `${folderLabelMap[splitKey] || splitKey} klasöründeki tüm sınıflar için yüzdeleri doldurunuz.`
+        );
+      }
+
+      if (providedCount === folderClassOptions.length && Math.abs(sum - 100) > 0.5) {
+        errors.push(
+          `${folderLabelMap[splitKey] || splitKey} klasöründeki yüzdelerin toplamı %100 olmalıdır.`
+        );
+      }
+
+      if (providedCount > 0) {
+        folderDistributionPayload[splitKey] = parsedDistribution;
       }
     });
 
@@ -1808,34 +1860,24 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
 
             <div className="metadata-section">
               <div className="metadata-header">
-                <h4>Veri Seti Toplamları</h4>
-                <span className="form-hint">Her bölüme ait görsel sayısını giriniz.</span>
+                <h4>Veri Seti Toplamı</h4>
+                <span className="form-hint">Tüm veri seti için toplam görsel sayısını giriniz.</span>
               </div>
-              <div className="nested-input-grid">
-                {['train', 'val', 'test', 'total'].map((key) => {
-                  const labelMap = {
-                    train: 'Train',
-                    val: 'Val',
-                    test: 'Test',
-                    total: 'Toplam'
-                  };
-                  return (
-                    <div key={key} className="nested-input-group">
-                      <label htmlFor={`dataset-total-${key}`}>{labelMap[key]}</label>
-                      <input
-                        id={`dataset-total-${key}`}
-                        type="number"
-                        min="0"
-                        step="1"
-                        inputMode="numeric"
-                        placeholder="Örn. 1200"
-                        value={projectInfo.datasetTotals?.[key] ?? ''}
-                        onChange={(e) => updateNestedProjectInfo('datasetTotals', key, e.target.value)}
-                        disabled={isLoading}
-                      />
-                    </div>
-                  );
-                })}
+              <div className="nested-input-grid single">
+                <div className="nested-input-group">
+                  <label htmlFor="dataset-total-all">Toplam Görsel Sayısı</label>
+                  <input
+                    id="dataset-total-all"
+                    type="number"
+                    min="0"
+                    step="1"
+                    inputMode="numeric"
+                    placeholder="Örn. 1200"
+                    value={projectInfo.datasetTotals?.total ?? ''}
+                    onChange={(e) => updateNestedProjectInfo('datasetTotals', 'total', e.target.value)}
+                    disabled={isLoading}
+                  />
+                </div>
               </div>
             </div>
 
@@ -1875,27 +1917,34 @@ const FileUploader = ({ onUpload, onArtifactsUpdate, isLoading, llmProvider, set
             <div className="metadata-section">
               <div className="metadata-header">
                 <h4>Klasör İçi Oranlar</h4>
-                <span className="form-hint">Her klasördeki sınıf dağılımını yüzde veya oran olarak belirtin (örn. Potluk %60 / Temiz %40).</span>
+                <span className="form-hint">Her klasörde Temiz / Problemli / HN yüzdelerinin toplamı %100 olmalıdır.</span>
               </div>
-              <div className="nested-input-grid">
-                {['train', 'val', 'test'].map((key) => {
-                  const labelMap = {
-                    train: 'Train klasörü',
-                    val: 'Val klasörü',
-                    test: 'Test klasörü'
-                  };
+              <div className="folder-distribution-grid">
+                <div className="folder-distribution-header" />
+                <div className="folder-distribution-header">Temiz %</div>
+                <div className="folder-distribution-header">Problemli %</div>
+                <div className="folder-distribution-header">HN %</div>
+                {['train', 'val', 'test'].map((splitKey) => {
                   return (
-                    <div key={key} className="nested-input-group">
-                      <label htmlFor={`folder-dist-${key}`}>{labelMap[key]}</label>
-                      <input
-                        id={`folder-dist-${key}`}
-                        type="text"
-                        placeholder="Örn. Potluk %60 / Temiz %40"
-                        value={projectInfo.folderDistributions?.[key] ?? ''}
-                        onChange={(e) => updateNestedProjectInfo('folderDistributions', key, e.target.value)}
-                        disabled={isLoading}
-                      />
-                    </div>
+                    <React.Fragment key={splitKey}>
+                      <div className="folder-distribution-row-label">{folderSplitLabels[splitKey]}</div>
+                      {folderClassOptions.map(({ key, label }) => (
+                        <div key={key} className="folder-distribution-input">
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.1"
+                            inputMode="decimal"
+                            aria-label={`${folderSplitLabels[splitKey]} ${label}`}
+                            placeholder="Örn. 60"
+                            value={projectInfo.folderDistributions?.[splitKey]?.[key] ?? ''}
+                            onChange={(e) => updateFolderDistribution(splitKey, key, e.target.value)}
+                            disabled={isLoading}
+                          />
+                        </div>
+                      ))}
+                    </React.Fragment>
                   );
                 })}
               </div>
