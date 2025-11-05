@@ -1499,6 +1499,129 @@ async def get_history():
     return {"runs": []}
 
 
+def _generate_threshold_suggestions(best: Dict[str, float]) -> str:
+    """Generate improvement suggestions based on threshold optimization results."""
+    suggestions = []
+
+    precision = best.get("precision", 0)
+    recall = best.get("recall", 0)
+    f1 = best.get("f1", 0)
+    map50 = best.get("map50", 0)
+    map75 = best.get("map75", 0)
+    iou = best.get("iou", 0)
+    conf = best.get("confidence", 0)
+
+    # Analyze precision/recall balance
+    if precision > 0 and recall > 0:
+        if precision > recall + 0.15:
+            suggestions.append({
+                "icon": "⚖️",
+                "title": "Recall Geliştirme Fırsatı",
+                "description": f"Precision ({precision:.1%}) recall'dan ({recall:.1%}) belirgin şekilde yüksek. Daha fazla nesneyi tespit etmek için confidence threshold'u düşürmeyi ({conf:.2f} → {max(0.1, conf-0.05):.2f}) veya daha fazla eğitim verisi eklemeyi değerlendirin.",
+                "impact": "Yüksek",
+                "color": "#f59e0b"
+            })
+        elif recall > precision + 0.15:
+            suggestions.append({
+                "icon": "🎯",
+                "title": "Precision İyileştirme Önerisi",
+                "description": f"Recall ({recall:.1%}) precision'dan ({precision:.1%}) belirgin şekilde yüksek. False positive'leri azaltmak için confidence threshold'u artırmayı ({conf:.2f} → {min(0.9, conf+0.05):.2f}) veya hard negative mining uygulayın.",
+                "impact": "Yüksek",
+                "color": "#f59e0b"
+            })
+
+    # F1 score analysis
+    if f1 < 0.7:
+        suggestions.append({
+            "icon": "📊",
+            "title": "Model Performans İyileştirmesi",
+            "description": f"F1 skoru ({f1:.1%}) hedef değerin altında. Model mimarisini güçlendirmeyi (daha büyük model), eğitim süresini artırmayı veya data augmentation stratejilerini zenginleştirmeyi düşünün.",
+            "impact": "Kritik",
+            "color": "#ef4444"
+        })
+    elif f1 >= 0.85:
+        suggestions.append({
+            "icon": "✅",
+            "title": "Mükemmel F1 Dengesi",
+            "description": f"F1 skoru ({f1:.1%}) hedef aralıkta. Production'a hazır. Farklı IoU threshold'larında performansı izlemeye devam edin.",
+            "impact": "Düşük",
+            "color": "#10b981"
+        })
+
+    # mAP analysis
+    if map50 > 0.85 and map75 < 0.65:
+        suggestions.append({
+            "icon": "🔍",
+            "title": "Lokalizasyon Hassasiyeti",
+            "description": f"mAP@0.5 ({map50:.1%}) yüksek ama mAP@0.75 ({map75:.1%}) düşük. Bu, bounding box lokalizasyonunun iyileştirilmesi gerektiğini gösterir. IoU loss weight'i artırın veya daha kaliteli annotation'lar kullanın.",
+            "impact": "Orta",
+            "color": "#3b82f6"
+        })
+
+    # Threshold optimization
+    if conf < 0.3:
+        suggestions.append({
+            "icon": "⚡",
+            "title": "Düşük Confidence Threshold",
+            "description": f"Mevcut confidence threshold ({conf:.2f}) çok düşük. Bu, gerçek dünya senaryolarında fazla false positive üretebilir. Production ortamında en az 0.35-0.40 arası threshold kullanmayı düşünün.",
+            "impact": "Orta",
+            "color": "#f59e0b"
+        })
+    elif conf > 0.7:
+        suggestions.append({
+            "icon": "🎚️",
+            "title": "Yüksek Confidence Threshold",
+            "description": f"Mevcut confidence threshold ({conf:.2f}) yüksek. Bu kesinlik istiyorsanız iyidir, ancak bazı geçerli tespitleri kaçırabilirsiniz. İhtiyaçlarınıza göre dengelemeyi değerlendirin.",
+            "impact": "Düşük",
+            "color": "#3b82f6"
+        })
+
+    # IoU threshold
+    if iou < 0.4:
+        suggestions.append({
+            "icon": "📐",
+            "title": "IoU Threshold Ayarı",
+            "description": f"IoU threshold ({iou:.2f}) düşük. NMS (Non-Maximum Suppression) daha esnek ama overlapping detections riski var. Çakışan tespit sayısını azaltmak için 0.45-0.50 aralığını deneyin.",
+            "impact": "Düşük",
+            "color": "#6b7280"
+        })
+
+    # Add general production recommendations
+    suggestions.append({
+        "icon": "🚀",
+        "title": "Production Deployment Önerileri",
+        "description": "Bu threshold'ları production'da kullanmadan önce: (1) Farklı lighting/weather koşullarında test edin, (2) Edge case'leri manuel olarak inceleyin, (3) A/B testi yaparak mevcut sisteminizle karşılaştırın.",
+        "impact": "Kritik",
+        "color": "#8b5cf6"
+    })
+
+    if not suggestions:
+        suggestions.append({
+            "icon": "✨",
+            "title": "İyi Dengeli Sonuçlar",
+            "description": "Threshold optimizasyonunuz dengeli görünüyor. Production'a geçmeden önce farklı data split'lerde validate etmeyi unutmayın.",
+            "impact": "Düşük",
+            "color": "#10b981"
+        })
+
+    # Generate HTML for suggestions
+    suggestions_html = ""
+    for suggestion in suggestions:
+        impact_class = suggestion["impact"].lower().replace("ü", "u").replace("ı", "i")
+        suggestions_html += f"""
+        <div class="suggestion-card" style="border-left: 4px solid {suggestion['color']};">
+            <div class="suggestion-header">
+                <span class="suggestion-icon">{suggestion['icon']}</span>
+                <span class="suggestion-title">{suggestion['title']}</span>
+                <span class="suggestion-impact impact-{impact_class}">{suggestion['impact']}</span>
+            </div>
+            <p class="suggestion-description">{suggestion['description']}</p>
+        </div>
+        """
+
+    return suggestions_html
+
+
 def _generate_threshold_html_report(report_id: str, context: Dict[str, Any]) -> str:
     """Generate HTML report for threshold optimization results."""
     model_filename = escape(str(context.get("model_filename", "N/A")))
@@ -1510,12 +1633,12 @@ def _generate_threshold_html_report(report_id: str, context: Dict[str, Any]) -> 
     best = context.get("best", {})
     best_iou = best.get("iou", 0)
     best_conf = best.get("confidence", 0)
-    best_precision = _format_percent(best.get("precision"))
-    best_recall = _format_percent(best.get("recall"))
-    best_f1 = _format_percent(best.get("f1"))
-    best_map50 = _format_percent(best.get("map50"))
-    best_map75 = _format_percent(best.get("map75"))
-    best_map5095 = _format_percent(best.get("map5095"))
+    best_precision = _format_percent(best.get("precision", 0))
+    best_recall = _format_percent(best.get("recall", 0))
+    best_f1 = _format_percent(best.get("f1", 0))
+    best_map50 = _format_percent(best.get("map50", 0))
+    best_map75 = _format_percent(best.get("map75", 0))
+    best_map5095 = _format_percent(best.get("map5095", 0))
 
     total_combinations = context.get("total_combinations", 0)
 
@@ -1526,30 +1649,237 @@ def _generate_threshold_html_report(report_id: str, context: Dict[str, Any]) -> 
     production_config = context.get("production_config", {})
     config_yaml = production_config.get("yaml", "")
 
+    # Generate improvement suggestions
+    suggestions_html = _generate_threshold_suggestions(best)
+
     template = Template("""<!DOCTYPE html>
 <html lang="tr">
 <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Threshold Optimization Report</title>
     <style>
-        body { font-family: 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; background: #f3f4f6; color: #111827; }
-        header { background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; padding: 32px; }
-        header h1 { margin: 0 0 8px; font-size: 28px; }
-        header p { margin: 0; font-size: 14px; opacity: 0.85; }
-        main { padding: 32px; }
-        section { background: white; border-radius: 16px; padding: 24px; margin-bottom: 24px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08); }
-        h2 { margin-top: 0; font-size: 22px; color: #1f2937; }
-        table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-        th, td { padding: 12px 16px; text-align: left; }
-        th { background: #eef2ff; font-weight: 600; }
-        tr:nth-child(even) td { background: #f9fafb; }
-        .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-top: 16px; }
-        .metric-card { background: #f9fafb; border-radius: 12px; padding: 16px; border: 2px solid #e5e7eb; }
-        .metric-label { font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; }
-        .metric-value { font-size: 24px; font-weight: 700; color: #1f2937; margin-top: 4px; }
-        .best-badge { display: inline-block; background: #10b981; color: white; padding: 6px 12px; border-radius: 999px; font-size: 14px; font-weight: 600; }
-        pre { background: #1f2937; color: #e5e7eb; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 13px; }
-        footer { text-align: center; padding: 24px; color: #6b7280; font-size: 12px; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #1f2937;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        header {
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%);
+            color: white;
+            padding: 40px 32px;
+            text-align: center;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+        }
+        header h1 {
+            margin: 0 0 12px;
+            font-size: 36px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+        header p {
+            margin: 0;
+            font-size: 16px;
+            opacity: 0.95;
+            font-weight: 300;
+        }
+        main {
+            padding: 32px 0;
+        }
+        section {
+            background: white;
+            border-radius: 20px;
+            padding: 32px;
+            margin-bottom: 28px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        section:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+        }
+        h2 {
+            margin: 0 0 24px;
+            font-size: 24px;
+            color: #1f2937;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding-bottom: 16px;
+            border-bottom: 3px solid #f3f4f6;
+        }
+        table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            margin-top: 16px;
+            overflow: hidden;
+            border-radius: 12px;
+        }
+        th, td {
+            padding: 16px 20px;
+            text-align: left;
+        }
+        th {
+            background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+            font-weight: 600;
+            color: #4f46e5;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        tr {
+            transition: background 0.2s;
+        }
+        tr:nth-child(even) td {
+            background: #fafafa;
+        }
+        tr:hover td {
+            background: #f0f9ff !important;
+        }
+        td {
+            border-bottom: 1px solid #f3f4f6;
+        }
+        .metric-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 24px;
+        }
+        .metric-card {
+            background: linear-gradient(135deg, #fafafa 0%, #ffffff 100%);
+            border-radius: 16px;
+            padding: 24px;
+            border: 2px solid #e5e7eb;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .metric-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #6366f1, #8b5cf6, #ec4899);
+        }
+        .metric-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 24px rgba(99, 102, 241, 0.15);
+            border-color: #6366f1;
+        }
+        .metric-label {
+            font-size: 13px;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        .metric-value {
+            font-size: 32px;
+            font-weight: 800;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-top: 4px;
+        }
+        .best-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 50px;
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+        }
+        .suggestion-card {
+            background: #ffffff;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+            transition: all 0.2s;
+        }
+        .suggestion-card:hover {
+            transform: translateX(4px);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+        }
+        .suggestion-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .suggestion-icon {
+            font-size: 28px;
+        }
+        .suggestion-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: #1f2937;
+            flex: 1;
+        }
+        .suggestion-impact {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .impact-kritik { background: #fee2e2; color: #dc2626; }
+        .impact-yuksek { background: #fef3c7; color: #d97706; }
+        .impact-orta { background: #dbeafe; color: #2563eb; }
+        .impact-dusuk { background: #d1fae5; color: #059669; }
+        .suggestion-description {
+            color: #4b5563;
+            line-height: 1.7;
+            font-size: 15px;
+        }
+        pre {
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 24px;
+            border-radius: 12px;
+            overflow-x: auto;
+            font-size: 14px;
+            line-height: 1.6;
+            box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+        footer {
+            text-align: center;
+            padding: 32px 24px;
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 14px;
+            font-weight: 300;
+        }
+        @media print {
+            body { background: white; }
+            section { box-shadow: none; page-break-inside: avoid; }
+            header { background: #6366f1; }
+        }
+        @media (max-width: 768px) {
+            .container { padding: 12px; }
+            header { padding: 24px 16px; }
+            header h1 { font-size: 28px; }
+            section { padding: 20px; }
+            .metric-grid { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
@@ -1557,7 +1887,7 @@ def _generate_threshold_html_report(report_id: str, context: Dict[str, Any]) -> 
         <h1>🎛️ Threshold Optimization Report</h1>
         <p>Rapor ID: $report_id • Tarih: $formatted_date</p>
     </header>
-    <main>
+    <main class="container">
         <section>
             <h2>📋 Optimizasyon Detayları</h2>
             <table>
@@ -1602,6 +1932,10 @@ def _generate_threshold_html_report(report_id: str, context: Dict[str, Any]) -> 
             </div>
         </section>
         <section>
+            <h2>💡 Geliştirme Önerileri</h2>
+            $suggestions_html
+        </section>
+        <section>
             <h2>⚙️ Production Config</h2>
             <pre>$config_yaml</pre>
         </section>
@@ -1632,6 +1966,7 @@ def _generate_threshold_html_report(report_id: str, context: Dict[str, Any]) -> 
         best_map75=best_map75,
         best_map5095=best_map5095,
         config_yaml=escape(config_yaml),
+        suggestions_html=suggestions_html,
     )
 
 
