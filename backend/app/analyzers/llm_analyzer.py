@@ -853,11 +853,27 @@ class LLMAnalyzer:
         if not raw_text and hasattr(response, "model_response"):  # pragma: no cover - compatibility path
             raw_text = str(getattr(response, "model_response", "")).strip()
 
+        # Extract token usage information
+        usage_info = {}
+        if hasattr(response, "usage"):
+            usage = response.usage
+            if hasattr(usage, "input_tokens"):
+                usage_info["input_tokens"] = usage.input_tokens
+            if hasattr(usage, "output_tokens"):
+                usage_info["output_tokens"] = usage.output_tokens
+            if "input_tokens" in usage_info and "output_tokens" in usage_info:
+                usage_info["total_tokens"] = usage_info["input_tokens"] + usage_info["output_tokens"]
+
         logger.debug(
-            "Claude yanıtı alındı (uzunluk=%s karakter)",
+            "Claude yanıtı alındı (uzunluk=%s karakter, tokens=%s)",
             len(raw_text),
+            usage_info.get("total_tokens", "N/A"),
         )
-        return self._parse_structured_output(raw_text)
+
+        result = self._parse_structured_output(raw_text)
+        if usage_info:
+            result["token_usage"] = usage_info
+        return result
 
     def _analyze_with_gpt(self, prompt: str, graph_images: Optional[List[Path]] = None) -> Dict:
         system_instruction = (
@@ -941,11 +957,30 @@ class LLMAnalyzer:
         if not raw_text and hasattr(response, "output_text"):
             raw_text = getattr(response, "output_text", "") or ""
 
+        # Extract token usage information
+        usage_info = {}
+        if hasattr(response, "usage"):
+            usage = response.usage
+            # OpenAI typically uses prompt_tokens, completion_tokens, total_tokens
+            if hasattr(usage, "prompt_tokens"):
+                usage_info["input_tokens"] = usage.prompt_tokens
+            if hasattr(usage, "completion_tokens"):
+                usage_info["output_tokens"] = usage.completion_tokens
+            if hasattr(usage, "total_tokens"):
+                usage_info["total_tokens"] = usage.total_tokens
+            elif "input_tokens" in usage_info and "output_tokens" in usage_info:
+                usage_info["total_tokens"] = usage_info["input_tokens"] + usage_info["output_tokens"]
+
         logger.debug(
-            "OpenAI yanıtı alındı (uzunluk=%s karakter)",
+            "OpenAI yanıtı alındı (uzunluk=%s karakter, tokens=%s)",
             len(raw_text),
+            usage_info.get("total_tokens", "N/A"),
         )
-        return self._parse_structured_output(raw_text)
+
+        result = self._parse_structured_output(raw_text)
+        if usage_info:
+            result["token_usage"] = usage_info
+        return result
 
     def _qa_with_claude(self, prompt: str) -> Dict[str, Any]:
         system_instruction = (
@@ -975,11 +1010,27 @@ class LLMAnalyzer:
         if not raw_text and hasattr(response, "model_response"):
             raw_text = str(getattr(response, "model_response", "")).strip()
 
+        # Extract token usage information
+        usage_info = {}
+        if hasattr(response, "usage"):
+            usage = response.usage
+            if hasattr(usage, "input_tokens"):
+                usage_info["input_tokens"] = usage.input_tokens
+            if hasattr(usage, "output_tokens"):
+                usage_info["output_tokens"] = usage.output_tokens
+            if "input_tokens" in usage_info and "output_tokens" in usage_info:
+                usage_info["total_tokens"] = usage_info["input_tokens"] + usage_info["output_tokens"]
+
         logger.debug(
-            "Claude QA yanıtı alındı (uzunluk=%s karakter)",
+            "Claude QA yanıtı alındı (uzunluk=%s karakter, tokens=%s)",
             len(raw_text),
+            usage_info.get("total_tokens", "N/A"),
         )
-        return self._parse_qa_output(raw_text)
+
+        result = self._parse_qa_output(raw_text)
+        if usage_info:
+            result["token_usage"] = usage_info
+        return result
 
     def _qa_with_gpt(self, prompt: str) -> Dict[str, Any]:
         system_instruction = (
@@ -1044,11 +1095,29 @@ class LLMAnalyzer:
         if not raw_text and hasattr(response, "output_text"):
             raw_text = getattr(response, "output_text", "") or ""
 
+        # Extract token usage information
+        usage_info = {}
+        if hasattr(response, "usage"):
+            usage = response.usage
+            if hasattr(usage, "prompt_tokens"):
+                usage_info["input_tokens"] = usage.prompt_tokens
+            if hasattr(usage, "completion_tokens"):
+                usage_info["output_tokens"] = usage.completion_tokens
+            if hasattr(usage, "total_tokens"):
+                usage_info["total_tokens"] = usage.total_tokens
+            elif "input_tokens" in usage_info and "output_tokens" in usage_info:
+                usage_info["total_tokens"] = usage_info["input_tokens"] + usage_info["output_tokens"]
+
         logger.debug(
-            "OpenAI QA yanıtı alındı (uzunluk=%s karakter)",
+            "OpenAI QA yanıtı alındı (uzunluk=%s karakter, tokens=%s)",
             len(raw_text),
+            usage_info.get("total_tokens", "N/A"),
         )
-        return self._parse_qa_output(raw_text)
+
+        result = self._parse_qa_output(raw_text)
+        if usage_info:
+            result["token_usage"] = usage_info
+        return result
 
     def _fallback_answer(
         self,

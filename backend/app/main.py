@@ -641,6 +641,78 @@ def _build_deploy_profile_html(deploy_profile: Any) -> str:
     return f"<p>{escape(str(deploy_profile))}</p>"
 
 
+def _build_dataset_review_html(dataset_review: Any) -> str:
+    """Build HTML for dataset_review section from AI analysis."""
+    if not dataset_review or not isinstance(dataset_review, dict):
+        return ""
+
+    html_parts = []
+
+    # Size evaluation
+    size_eval = dataset_review.get("size_evaluation")
+    if size_eval:
+        html_parts.append(f"<p><strong>Boyut Değerlendirmesi:</strong> {escape(str(size_eval))}</p>")
+
+    # Split assessment
+    split_assess = dataset_review.get("split_assessment")
+    if split_assess:
+        html_parts.append(f"<p><strong>Bölümleme Değerlendirmesi:</strong> {escape(str(split_assess))}</p>")
+
+    # Folder distribution
+    folder_dist = dataset_review.get("folder_distribution")
+    if folder_dist and isinstance(folder_dist, list):
+        items_html = _build_list_html(folder_dist)
+        html_parts.append(f"<div><strong>Klasör Dağılımı:</strong>{items_html}</div>")
+
+    # Recommendations
+    recommendations = dataset_review.get("recommendations")
+    if recommendations and isinstance(recommendations, list):
+        items_html = _build_list_html(recommendations)
+        html_parts.append(f"<div><strong>Öneriler:</strong>{items_html}</div>")
+
+    if not html_parts:
+        return ""
+
+    return "".join(html_parts)
+
+
+def _build_architecture_alignment_html(arch_alignment: Any) -> str:
+    """Build HTML for architecture_alignment section from AI analysis."""
+    if not arch_alignment or not isinstance(arch_alignment, dict):
+        return ""
+
+    html_parts = []
+
+    # Model info
+    model_name = arch_alignment.get("model_name")
+    if model_name:
+        html_parts.append(f"<p><strong>Model:</strong> {escape(str(model_name))}</p>")
+
+    min_required = arch_alignment.get("minimum_required_images")
+    if min_required:
+        html_parts.append(f"<p><strong>Minimum Gerekli Görsel:</strong> {escape(str(min_required))}</p>")
+
+    current_dataset = arch_alignment.get("current_dataset_images")
+    if current_dataset:
+        html_parts.append(f"<p><strong>Mevcut Veri Seti Görselleri:</strong> {escape(str(current_dataset))}</p>")
+
+    # Fit assessment
+    fit_assess = arch_alignment.get("fit_assessment")
+    if fit_assess:
+        html_parts.append(f"<p><strong>Uyum Değerlendirmesi:</strong> {escape(str(fit_assess))}</p>")
+
+    # Actions
+    actions = arch_alignment.get("actions")
+    if actions and isinstance(actions, list):
+        items_html = _build_list_html(actions)
+        html_parts.append(f"<div><strong>Önerilen Aksiyonlar:</strong>{items_html}</div>")
+
+    if not html_parts:
+        return ""
+
+    return "".join(html_parts)
+
+
 def _generate_html_report(report_id: str, context: Dict[str, Any]) -> str:
     project_context = context.get("project") or context.get("config", {}).get("project_context", {}) or {}
     project_name = project_context.get("project_name") or "DL Result Report"
@@ -658,6 +730,10 @@ def _generate_html_report(report_id: str, context: Dict[str, Any]) -> str:
 
     risk_section = _build_risk_chips(analysis)
     deploy_html = _build_deploy_profile_html(analysis.get("deploy_profile"))
+
+    # Extract dataset_review and architecture_alignment from analysis
+    dataset_review_html = _build_dataset_review_html(analysis.get("dataset_review"))
+    architecture_alignment_html = _build_architecture_alignment_html(analysis.get("architecture_alignment"))
 
     qa_history = context.get("qa_history", []) or []
     qa_items: List[str] = []
@@ -733,6 +809,45 @@ def _generate_html_report(report_id: str, context: Dict[str, Any]) -> str:
             </div>
         </div>
         """.format(notes=escape(str(notes_text)))
+
+    # Build dataset review section
+    dataset_review_section = ""
+    if dataset_review_html:
+        dataset_review_section = f"""
+        <div class=\"section-block\">
+            <div class=\"collapsible\" data-collapsible data-open>
+                <button type=\"button\" class=\"collapsible-trigger\" data-collapsible-trigger>
+                    <span>Veri Seti Değerlendirmesi</span>
+                    <svg aria-hidden=\"true\"><use href=\"#icon-chevron\" xlink:href=\"#icon-chevron\"></use></svg>
+                </button>
+                <div class=\"collapsible-content\" data-collapsible-content>
+                    {dataset_review_html}
+                </div>
+            </div>
+        </div>
+        """
+
+    # Build architecture alignment section
+    architecture_alignment_section = ""
+    if architecture_alignment_html:
+        architecture_alignment_section = f"""
+        <div class=\"section-block\">
+            <div class=\"collapsible\" data-collapsible data-open>
+                <button type=\"button\" class=\"collapsible-trigger\" data-collapsible-trigger>
+                    <span>Model Mimarisi Uyumu</span>
+                    <svg aria-hidden=\"true\"><use href=\"#icon-chevron\" xlink:href=\"#icon-chevron\"></use></svg>
+                </button>
+                <div class=\"collapsible-content\" data-collapsible-content>
+                    {architecture_alignment_html}
+                </div>
+            </div>
+        </div>
+        """
+
+    # Get token usage info
+    token_usage = context.get("token_usage", {})
+    total_tokens = token_usage.get("total_tokens", 0) if isinstance(token_usage, dict) else 0
+    token_info_text = f"Toplam token kullanımı: {total_tokens:,}" if total_tokens > 0 else ""
 
     page_title = f"{project_name} - DL Result Analyzer"
 
@@ -823,6 +938,8 @@ $icons_svg
                     <h3>Yayın profili</h3>
                     $deploy_profile
                 </div>
+                $dataset_review_section
+                $architecture_alignment_section
                 $notes_block
             </section>
             <section class=\"section-card\" aria-labelledby=\"qa-heading\">
@@ -839,6 +956,7 @@ $icons_svg
     <footer class=\"report-footer\">
         <span>DL_Result_Analyzer • sürüm $app_version</span>
         <span>Oluşturulma zamanı: $generated_at</span>
+        $token_info_span
     </footer>
     <script defer>
 $ui_script
@@ -847,6 +965,8 @@ $ui_script
 </html>
 """
     )
+
+    token_info_span = f"<span>{escape(token_info_text)}</span>" if token_info_text else ""
 
     return template.substitute(
         page_title=escape(page_title),
@@ -859,9 +979,12 @@ $ui_script
         analysis_lists=analysis_lists_html,
         actions_html=actions_html,
         deploy_profile=deploy_html,
+        dataset_review_section=dataset_review_section,
+        architecture_alignment_section=architecture_alignment_section,
         notes_block=notes_block,
         qa_history=qa_history_html,
         summary_text=summary_text,
+        token_info_span=token_info_span,
         icons_svg=REPORT_ICONS_SVG,
         theme_css=REPORT_THEME_CSS,
         print_css=REPORT_PRINT_CSS,
@@ -1495,6 +1618,16 @@ async def upload_results(
             "training_code": training_code_path.name if training_code_path else None,
         }
 
+        # Extract token usage from analysis
+        analysis_token_usage = analysis.pop("token_usage", None) if isinstance(analysis, dict) else None
+        token_usage_info: Dict[str, Any] = {
+            "analysis": analysis_token_usage,
+            "qa_sessions": [],
+            "total_input_tokens": analysis_token_usage.get("input_tokens", 0) if analysis_token_usage else 0,
+            "total_output_tokens": analysis_token_usage.get("output_tokens", 0) if analysis_token_usage else 0,
+            "total_tokens": analysis_token_usage.get("total_tokens", 0) if analysis_token_usage else 0,
+        }
+
         report_context: Dict[str, Any] = {
             "metrics": metrics,
             "config": enriched_config,
@@ -1506,6 +1639,7 @@ async def upload_results(
             "files": files_payload,
             "llm_provider": provider,
             "qa_history": [],
+            "token_usage": token_usage_info,
         }
 
         report_id = REPORT_STORE.save(report_context)
@@ -1569,6 +1703,9 @@ async def report_qa(report_id: str, payload: QARequest):
         logger.exception("LLM Q/A isteği başarısız oldu")
         raise HTTPException(status_code=500, detail=f"LLM Q/A başarısız oldu: {exc}") from exc
 
+    # Extract token usage from QA response
+    qa_token_usage = answer_payload.pop("token_usage", None) if isinstance(answer_payload, dict) else None
+
     qa_entry = {
         "question": question,
         "answer": answer_payload.get("answer", ""),
@@ -1577,6 +1714,7 @@ async def report_qa(report_id: str, payload: QARequest):
         "notes": answer_payload.get("notes"),
         "provider": provider,
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "token_usage": qa_token_usage,
         "raw": answer_payload,
     }
 
@@ -1586,6 +1724,25 @@ async def report_qa(report_id: str, payload: QARequest):
         context["qa_history"] = history
     history.append(qa_entry)
     context["llm_provider"] = provider
+
+    # Update total token usage
+    token_usage_info = context.get("token_usage", {})
+    if not isinstance(token_usage_info, dict):
+        token_usage_info = {
+            "analysis": None,
+            "qa_sessions": [],
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_tokens": 0,
+        }
+
+    if qa_token_usage:
+        token_usage_info["qa_sessions"].append(qa_token_usage)
+        token_usage_info["total_input_tokens"] += qa_token_usage.get("input_tokens", 0)
+        token_usage_info["total_output_tokens"] += qa_token_usage.get("output_tokens", 0)
+        token_usage_info["total_tokens"] += qa_token_usage.get("total_tokens", 0)
+
+    context["token_usage"] = token_usage_info
 
     REPORT_STORE.update(report_id, context)
 
