@@ -215,8 +215,9 @@ body {
 
 .uploader-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr);
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 2rem;
+  align-items: start;
 }
 
 .uploader-column {
@@ -226,11 +227,13 @@ body {
 }
 
 .uploader-metadata {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
   background: rgba(79, 70, 229, 0.04);
   border: 1px solid rgba(79, 70, 229, 0.12);
   border-radius: 14px;
   padding: 1.5rem;
-  gap: 1.25rem;
 }
 
 .input-group {
